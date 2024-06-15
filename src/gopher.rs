@@ -4,6 +4,7 @@ use async_std::{
 };
 use url::Url;
 
+#[derive(PartialEq, Debug)]
 enum GopherItem {
     TextFile,
     Submenu,
@@ -143,4 +144,17 @@ pub async fn fetch_url(url: Url) -> Result<Vec<u8>, anyhow::Error> {
         .await?;
     stream.read_to_end(&mut result).await?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsing_entries() {
+        let e = DirEntry::from("1Test entry\t/test\texample.com\t70\r\n");
+        assert_eq!(e.label, "Test entry");
+        assert_eq!(e.item_type, GopherItem::Submenu);
+        assert_eq!(e.url, Url::parse("gopher://example.com:70/test").unwrap());
+    }
 }
