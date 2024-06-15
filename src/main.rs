@@ -1,10 +1,6 @@
-use std::net::Shutdown;
+mod gopher;
 
-use anyhow::{anyhow, Result};
-use async_std::io::prelude::BufReadExt;
-use async_std::io::{BufReader, ReadExt, WriteExt};
-use async_std::net::TcpStream;
-use async_std::stream::StreamExt;
+use anyhow::Result;
 use serde::Deserialize;
 use tide::prelude::*;
 use tide::{http::mime, Request};
@@ -61,46 +57,15 @@ async fn proxy_req(req: Request<()>) -> tide::Result {
         let _ = url.set_port(Some(70));
     }
 
-    let mut gopher_resp = fetch_site(url).await?;
-    gopher_resp = gopher_resp.replace("\r\n", "\n<br>\n");
+    let gopher_resp = String::from_utf8(gopher::fetch_url(url).await?)?;
+    // gopher_resp = gopher_resp.replace("\r\n", "\n<br>\n");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {
             title: String::from("port70"),
-            body: format!("<span>{}<span>", gopher_resp),
+            body: format!("<pre>{}</pre>", gopher_resp),
         })?)
         .content_type(mime::HTML)
         .build())
-}
-
-async fn fetch_site(url: Url) -> Result<String, anyhow::Error> {
-    let mut stream = TcpStream::connect(format!(
-        "{}:{}",
-        url.host().unwrap(),
-        url.port().unwrap_or(70),
-    ))
-    .await?;
-    let mut result = String::new();
-    stream
-        .write_all(format!("{}\r\n", url.path()).as_bytes())
-        .await?;
-    stream.read_to_string(&mut result).await?;
-    // let mut lines = BufReader::new(stream).lines().fuse();
-    // loop {
-    //     match lines.next().await {
-    //         Some(line) => match line?.as_str() {
-    //             "." => {
-    //                 stream.shutdown(Shutdown::Both)?;
-    //                 break;
-    //             }
-    //             v => {
-    //                 result.push_str("\n");
-    //                 result.push_str(v);
-    //             }
-    //         },
-    //         None => break,
-    //     }
-    // }
-    Ok(result)
 }
 
 async fn proxy_redirect(req: Request<()>) -> tide::Result {
