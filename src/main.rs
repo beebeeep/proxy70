@@ -1,9 +1,13 @@
 mod gopher;
 
 use anyhow::Result;
+use async_std::io::prelude::BufReadExt;
+use async_std::io::ReadExt;
+use async_std::stream::StreamExt;
+use gopher::{DirEntry, GopherItem};
 use serde::Deserialize;
-use tide::prelude::*;
 use tide::{http::mime, Request};
+use tide::{log, prelude::*};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
@@ -57,12 +61,39 @@ async fn proxy_req(req: Request<()>) -> tide::Result {
         let _ = url.set_port(Some(70));
     }
 
-    let gopher_resp = String::from_utf8(gopher::fetch_url(url).await?)?;
+    let mut body = String::new();
+    let mut response = gopher::fetch_url(url).await?.lines();
+    let mut is_para = false;
+    while let Some(rline) = response.next().await {
+        let line = rline.unwrap_or_default();
+        log::info!("got {}", line);
+        let entry = gopher::DirEntry::from(line.as_str());
+        log::info!("parsed as {:?}", entry);
+        if entry.item_type == GopherItem::Info {
+            if !is_para {
+                body.push_str("<p>\n");
+                is_para = true;
+            }
+            body.push_str(&entry.label);
+            body.push_str("\n");
+        } else {
+            if is_para {
+                body.push_str("</p>\n");
+                is_para = false
+            }
+            match entry.url {
+                Some(url) => {
+                    body.push_str(&format!("<a href=\"{}\">{}</a><br>\n", url, entry.label))
+                }
+                None => body.push_str(&format!("{}<br>\n", entry.label)),
+            }
+        }
+    }
     // gopher_resp = gopher_resp.replace("\r\n", "\n<br>\n");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {
             title: String::from("port70"),
-            body: format!("<pre>{}</pre>", gopher_resp),
+            body: body,
         })?)
         .content_type(mime::HTML)
         .build())

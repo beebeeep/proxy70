@@ -1,11 +1,12 @@
 use async_std::{
-    io::{ReadExt, WriteExt},
+    io::{BufReader, ReadExt, WriteExt},
     net::TcpStream,
 };
+use tide::log;
 use url::Url;
 
 #[derive(PartialEq, Debug)]
-enum GopherItem {
+pub enum GopherItem {
     TextFile,
     Submenu,
     Nameserver,
@@ -32,12 +33,6 @@ enum GopherItem {
     PdfFile,
     XmlFile,
     Unknown,
-}
-
-struct DirEntry {
-    item_type: GopherItem,
-    label: String,
-    url: Url,
 }
 
 impl From<char> for GopherItem {
@@ -106,44 +101,83 @@ impl Into<char> for GopherItem {
     }
 }
 
+#[derive(Debug)]
+pub struct DirEntry {
+    pub item_type: GopherItem,
+    pub label: String,
+    pub url: Option<Url>,
+}
+
 impl From<&str> for DirEntry {
     fn from(value: &str) -> Self {
         let mut e = value.split('\t');
         match (e.next(), e.next(), e.next(), e.next()) {
             (Some(item_label), Some(selector), Some(host), Some(port)) => {
-                let url =
-                    Url::parse(format!("gopher://{}:{}{}", host, port, selector).as_str()).unwrap();
                 let mut s = item_label.chars();
                 let t: GopherItem = s.next().unwrap().into();
                 let label: String = s.collect();
-                DirEntry {
-                    item_type: t,
-                    label,
-                    url,
-                }
+                DirEntry::new(t, label.as_str(), selector, host, port)
             }
             _ => DirEntry {
                 item_type: GopherItem::Unknown,
-                label: String::from("<invalid entry>"),
-                url: Url::parse("gopher://error.example.com:1").unwrap(),
+                label: String::from("[invalid entry]"),
+                url: None,
             },
         }
     }
 }
 
-pub async fn fetch_url(url: Url) -> Result<Vec<u8>, anyhow::Error> {
+impl DirEntry {
+    pub fn new(item_type: GopherItem, label: &str, selector: &str, host: &str, port: &str) -> Self {
+        match item_type {
+            GopherItem::Info => DirEntry {
+                item_type,
+                label: String::from(label),
+                url: None,
+            },
+            _ => DirEntry {
+                item_type,
+                label: String::from(label),
+                url: get_url(selector, host, port),
+            },
+        }
+    }
+}
+
+pub async fn fetch_url(url: Url) -> Result<BufReader<TcpStream>, anyhow::Error> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
         url.host().unwrap(),
         url.port().unwrap_or(70),
     ))
     .await?;
-    let mut result = Vec::new();
+    // let mut result = Vec::new();
     stream
         .write_all(format!("{}\r\n", url.path()).as_bytes())
         .await?;
-    stream.read_to_end(&mut result).await?;
-    Ok(result)
+    let mut buf = BufReader::new(stream);
+    Ok(buf)
+}
+
+pub async fn fetch_directory(url: Url) -> Result<Vec<DirEntry>, anyhow::Error> {
+    todo!("implement");
+}
+
+fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
+    let url_str: String;
+    if selector.starts_with("URL:") {
+        url_str = String::from(&selector[4..])
+    } else {
+        url_str = format!("gopher://{}:{}{}", host, port, selector)
+    };
+
+    match Url::parse(&url_str) {
+        Ok(url) => Some(url),
+        Err(e) => {
+            log::error!("parsing url: {:}", e);
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +189,9 @@ mod tests {
         let e = DirEntry::from("1Test entry\t/test\texample.com\t70\r\n");
         assert_eq!(e.label, "Test entry");
         assert_eq!(e.item_type, GopherItem::Submenu);
-        assert_eq!(e.url, Url::parse("gopher://example.com:70/test").unwrap());
+        assert_eq!(
+            e.url,
+            Some(Url::parse("gopher://example.com:70/test").unwrap())
+        );
     }
 }
