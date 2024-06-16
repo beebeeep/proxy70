@@ -64,32 +64,60 @@ async fn proxy_req(req: Request<()>) -> tide::Result {
     let mut body = String::new();
     let mut response = gopher::fetch_url(url).await?.lines();
     let mut is_para = false;
+    // body.push_str("<table>\n");
+    // while let Some(rline) = response.next().await {
+    //     let line = rline.unwrap_or_default();
+    //     log::info!("got {}", line);
+    //     let entry = gopher::DirEntry::from(line.as_str());
+    //     log::info!("parsed as {:?}", entry);
+    //     if entry.item_type == GopherItem::Info {
+    //         if !is_para {
+    //             body.push_str("<p>\n");
+    //             is_para = true;
+    //         }
+    //         body.push_str(&entry.label);
+    //         body.push_str("\n");
+    //     } else {
+    //         if is_para {
+    //             body.push_str("</p>\n");
+    //             is_para = false
+    //         }
+    //         body.push_str("<span>\n");
+    //         if entry.item_type == GopherItem::Submenu {
+    //             body.push_str("<i class=\"fa fa-folder\"></i> ")
+    //         }
+    //         match entry.url {
+    //             Some(url) => {
+    //                 body.push_str(&format!("<a href=\"{}\">{}</a><br>\n", url, entry.label))
+    //             }
+    //             None => body.push_str(&format!("{}<br>\n", entry.label)),
+    //         }
+    //         body.push_str("</span>\n");
+    //     }
+    // }
+    // body.push_str("</table>\n");
+    body.push_str("<table>\n");
     while let Some(rline) = response.next().await {
-        let line = rline.unwrap_or_default();
-        log::info!("got {}", line);
-        let entry = gopher::DirEntry::from(line.as_str());
-        log::info!("parsed as {:?}", entry);
-        if entry.item_type == GopherItem::Info {
-            if !is_para {
-                body.push_str("<p>\n");
-                is_para = true;
+        body.push_str("<tr>\n");
+        let entry = gopher::DirEntry::from(rline.unwrap_or_default().as_str());
+
+        match entry.item_type {
+            GopherItem::Submenu => {
+                body.push_str(format!("<td><i class=\"fa fa-folder-o\"></i></td>").as_str());
             }
-            body.push_str(&entry.label);
-            body.push_str("\n");
-        } else {
-            if is_para {
-                body.push_str("</p>\n");
-                is_para = false
+            GopherItem::TextFile => {
+                body.push_str(format!("<td><i class=\"fa fa-file-text-o\"></i></td>").as_str());
             }
-            match entry.url {
-                Some(url) => {
-                    body.push_str(&format!("<a href=\"{}\">{}</a><br>\n", url, entry.label))
-                }
-                None => body.push_str(&format!("{}<br>\n", entry.label)),
-            }
+            _ => body.push_str("<td></td>"),
         }
+        body.push_str("<td>");
+        match entry.url {
+            Some(url) => body.push_str(&format!("<a href=\"{}\">{}</a>\n", url, entry.label)),
+            None => body.push_str(&format!("{}\n", entry.label)),
+        }
+        body.push_str("</td></tr>\n");
     }
-    // gopher_resp = gopher_resp.replace("\r\n", "\n<br>\n");
+    body.push_str("</table>\n");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {
             title: String::from("port70"),
