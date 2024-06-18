@@ -161,6 +161,11 @@ async fn render_submenu(url: Url) -> tide::Result {
         }
         body.push_str("</pre></td></tr>\n");
     }
+    if !paragraph.is_empty() {
+        body.push_str(format!("{}</pre></td></tr>", paragraph).as_str());
+        paragraph.clear();
+    }
+
     body.push_str("</table>\n");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {
