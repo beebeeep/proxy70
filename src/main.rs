@@ -97,7 +97,7 @@ async fn render_text(url: Url) -> tide::Result {
     body.push_str("</pre>");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {
-            title: String::from("port70"),
+            title: String::from("proxy70"),
             body: body,
         })?)
         .content_type(mime::HTML)
@@ -169,7 +169,7 @@ async fn render_submenu(url: Url) -> tide::Result {
     body.push_str("</table>\n");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {
-            title: String::from("port70"),
+            title: String::from("proxy70"),
             body: body,
         })?)
         .content_type(mime::HTML)
