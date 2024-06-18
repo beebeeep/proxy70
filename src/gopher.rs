@@ -216,25 +216,16 @@ pub async fn fetch_url(url: Url) -> Result<BufReader<TcpStream>, anyhow::Error> 
 
 fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
     let url_str: String;
-    let mut web = false;
     if selector.starts_with("URL:") {
-        web = true;
         url_str = String::from(&selector[4..])
+    } else if selector.ends_with("/") {
+        url_str = format!("gopher://{}:{}{}", host, port, selector)
     } else {
-        url_str = format!("gopher://{}:{}", host, port)
+        url_str = format!("gopher://{}:{}/{}", host, port, selector)
     };
 
     match Url::parse(&url_str) {
-        Ok(url) => {
-            if web {
-                Some(url)
-            } else {
-                match url.join(selector) {
-                    Ok(url) => Some(url),
-                    Err(_) => None,
-                }
-            }
-        }
+        Ok(url) => Some(url),
         Err(e) => {
             log::error!("parsing url: {:}", e);
             None
