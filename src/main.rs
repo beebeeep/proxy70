@@ -157,12 +157,12 @@ async fn render_submenu(url: Url) -> tide::Result {
         body.push_str("<td><pre>");
         match entry.url {
             Some(url) => body.push_str(&format!(
-                "<a href=\"/proxy?url={}&t={}\">{}</a>\n",
+                "<a href=\"/proxy?url={}&t={}\">{}</a>",
                 urlencoding::encode(&url.to_string()),
                 Into::<char>::into(entry.item_type),
                 entry.label
             )),
-            None => body.push_str(&format!("{}\n", entry.label)),
+            None => body.push_str(&format!("{}", entry.label)),
         }
         body.push_str("</pre></td></tr>\n");
     }
