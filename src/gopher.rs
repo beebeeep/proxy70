@@ -218,7 +218,7 @@ fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
     let url_str: String;
     if selector.starts_with("URL:") {
         url_str = String::from(&selector[4..])
-    } else if selector.ends_with("/") {
+    } else if selector.starts_with("/") {
         url_str = format!("gopher://{}:{}{}", host, port, selector)
     } else {
         url_str = format!("gopher://{}:{}/{}", host, port, selector)

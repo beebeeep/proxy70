@@ -1,12 +1,12 @@
 mod gopher;
 
-use std::io::Error;
+
 
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
-use async_std::io::Lines;
-use async_std::stream::{Stream, StreamExt};
+
+use async_std::stream::{StreamExt};
 use gopher::GopherItem;
 use serde::Deserialize;
 use tide::{http::mime, Request};
