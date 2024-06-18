@@ -107,45 +107,16 @@ async fn render_text(url: Url) -> tide::Result {
 async fn render_submenu(url: Url) -> tide::Result {
     let mut body = String::new();
     let mut response = gopher::fetch_url(url).await?.lines();
-    // let mut is_para = false;
-    // body.push_str("<table>\n");
-    // while let Some(rline) = response.next().await {
-    //     let line = rline.unwrap_or_default();
-    //     log::info!("got {}", line);
-    //     let entry = gopher::DirEntry::from(line.as_str());
-    //     log::info!("parsed as {:?}", entry);
-    //     if entry.item_type == GopherItem::Info {
-    //         if !is_para {
-    //             body.push_str("<p>\n");
-    //             is_para = true;
-    //         }
-    //         body.push_str(&entry.label);
-    //         body.push_str("\n");
-    //     } else {
-    //         if is_para {
-    //             body.push_str("</p>\n");
-    //             is_para = false
-    //         }
-    //         body.push_str("<span>\n");
-    //         if entry.item_type == GopherItem::Submenu {
-    //             body.push_str("<i class=\"fa fa-folder\"></i> ")
-    //         }
-    //         match entry.url {
-    //             Some(url) => {
-    //                 body.push_str(&format!("<a href=\"{}\">{}</a><br>\n", url, entry.label))
-    //             }
-    //             None => body.push_str(&format!("{}<br>\n", entry.label)),
-    //         }
-    //         body.push_str("</span>\n");
-    //     }
-    // }
-    // body.push_str("</table>\n");
     body.push_str("<table>\n");
-    while let Some(rline) = response.next().await {
+    while let Some(Ok(line)) = response.next().await {
+        if line == "." {
+            break;
+        }
         body.push_str("<tr>\n");
-        let entry = gopher::DirEntry::from(rline.unwrap_or_default().as_str());
+        let entry = gopher::DirEntry::from(line.as_str());
 
         match entry.item_type {
+            GopherItem::Unknown => continue,
             GopherItem::Submenu => {
                 body.push_str(format!("<td><i class=\"fa fa-folder-o\"></i></td>").as_str());
             }
@@ -156,12 +127,17 @@ async fn render_submenu(url: Url) -> tide::Result {
         }
         body.push_str("<td><pre>");
         match entry.url {
-            Some(url) => body.push_str(&format!(
-                "<a href=\"/proxy?url={}&t={}\">{}</a>",
-                urlencoding::encode(&url.to_string()),
-                Into::<char>::into(entry.item_type),
-                entry.label
-            )),
+            Some(url) => {
+                let href = match url.scheme() {
+                    "gopher" => format!(
+                        "/proxy?url={}&t={}",
+                        urlencoding::encode(&url.to_string()),
+                        Into::<char>::into(entry.item_type),
+                    ),
+                    _ => url.to_string(),
+                };
+                body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label))
+            }
             None => body.push_str(&format!("{}", entry.label)),
         }
         body.push_str("</pre></td></tr>\n");
