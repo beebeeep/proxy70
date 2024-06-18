@@ -2,12 +2,12 @@ mod gopher;
 
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
-use async_std::io::ReadExt;
+
 use async_std::stream::StreamExt;
-use gopher::{DirEntry, GopherItem};
+use gopher::{GopherItem};
 use serde::Deserialize;
 use tide::{http::mime, Request};
-use tide::{log, prelude::*, Body, Response};
+use tide::{prelude::*, Body};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
@@ -123,21 +123,18 @@ async fn render_submenu(url: Url) -> tide::Result {
             GopherItem::TextFile => {
                 body.push_str(format!("<td><i class=\"fa fa-file-text-o\"></i></td>").as_str());
             }
+            GopherItem::ImageFile => {
+                body.push_str(
+                    format!("<td></td><td><img src=\"{}\" />", entry.to_href().unwrap()).as_str(),
+                );
+                continue;
+            }
             _ => body.push_str("<td></td>"),
         }
+
         body.push_str("<td><pre>");
-        match entry.url {
-            Some(url) => {
-                let href = match url.scheme() {
-                    "gopher" => format!(
-                        "/proxy?url={}&t={}",
-                        urlencoding::encode(&url.to_string()),
-                        Into::<char>::into(entry.item_type),
-                    ),
-                    _ => url.to_string(),
-                };
-                body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label))
-            }
+        match entry.to_href() {
+            Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label)),
             None => body.push_str(&format!("{}", entry.label)),
         }
         body.push_str("</pre></td></tr>\n");

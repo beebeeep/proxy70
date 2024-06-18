@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use async_std::{
-    io::{BufReader, ReadExt, WriteExt},
+    io::{BufReader, WriteExt},
     net::TcpStream,
 };
 use serde::Deserialize;
@@ -11,7 +11,7 @@ use tide::{
 };
 use url::Url;
 
-#[derive(PartialEq, Debug, Deserialize)]
+#[derive(PartialEq, Debug, Deserialize, Clone, Copy)]
 pub enum GopherItem {
     TextFile,
     Submenu,
@@ -183,6 +183,22 @@ impl DirEntry {
     }
 }
 
+impl DirEntry {
+    pub fn to_href(&self) -> Option<String> {
+        match &self.url {
+            Some(url) => match url.scheme() {
+                "gopher" => Some(format!(
+                    "/proxy?url={}&t={}",
+                    urlencoding::encode(&url.to_string()),
+                    Into::<char>::into(self.item_type.clone()),
+                )),
+                _ => Some(url.to_string()),
+            },
+            None => None,
+        }
+    }
+}
+
 pub async fn fetch_url(url: Url) -> Result<BufReader<TcpStream>, anyhow::Error> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
@@ -194,12 +210,8 @@ pub async fn fetch_url(url: Url) -> Result<BufReader<TcpStream>, anyhow::Error> 
     stream
         .write_all(format!("{}\r\n", url.path()).as_bytes())
         .await?;
-    let mut buf = BufReader::new(stream);
+    let buf = BufReader::new(stream);
     Ok(buf)
-}
-
-pub async fn fetch_directory(url: Url) -> Result<Vec<DirEntry>, anyhow::Error> {
-    todo!("implement");
 }
 
 fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
