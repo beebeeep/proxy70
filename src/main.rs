@@ -1,10 +1,13 @@
 mod gopher;
 
+use std::io::Error;
+
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
-use async_std::stream::StreamExt;
-use gopher::{GopherItem};
+use async_std::io::Lines;
+use async_std::stream::{Stream, StreamExt};
+use gopher::GopherItem;
 use serde::Deserialize;
 use tide::{http::mime, Request};
 use tide::{prelude::*, Body};
@@ -108,13 +111,28 @@ async fn render_submenu(url: Url) -> tide::Result {
     let mut body = String::new();
     let mut response = gopher::fetch_url(url).await?.lines();
     body.push_str("<table>\n");
+    let mut paragraph = String::new();
     while let Some(Ok(line)) = response.next().await {
         if line == "." {
             break;
         }
-        body.push_str("<tr>\n");
+
         let entry = gopher::DirEntry::from(line.as_str());
 
+        if entry.item_type == GopherItem::Info {
+            // consume any subsequent Info items into single paragraph
+            // to make sure pseudographics in menus is shown as intended
+            if paragraph.is_empty() {
+                paragraph.push_str("<tr><td></td><td><pre>");
+            }
+            paragraph.push_str(format!("{}\n", &entry.label).as_str());
+            continue;
+        } else if !paragraph.is_empty() {
+            body.push_str(format!("{}</pre></td></tr>", paragraph).as_str());
+            paragraph.clear();
+        }
+
+        body.push_str("<tr>\n");
         match entry.item_type {
             GopherItem::Unknown => continue,
             GopherItem::Submenu => {
@@ -125,7 +143,11 @@ async fn render_submenu(url: Url) -> tide::Result {
             }
             GopherItem::ImageFile => {
                 body.push_str(
-                    format!("<td></td><td><img src=\"{}\" />", entry.to_href().unwrap()).as_str(),
+                    format!(
+                        "<td></td><td><img src=\"{}\" />\n</tr>",
+                        entry.to_href().unwrap()
+                    )
+                    .as_str(),
                 );
                 continue;
             }
