@@ -1,11 +1,17 @@
+use std::str::FromStr;
+
 use async_std::{
     io::{BufReader, ReadExt, WriteExt},
     net::TcpStream,
 };
-use tide::log;
+use serde::Deserialize;
+use tide::{
+    http::{mime, Mime},
+    log,
+};
 use url::Url;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Deserialize)]
 pub enum GopherItem {
     TextFile,
     Submenu,
@@ -97,6 +103,39 @@ impl Into<char> for GopherItem {
             Self::PdfFile => 'P',
             Self::XmlFile => 'X',
             Self::Unknown => '?',
+        }
+    }
+}
+
+impl Into<Mime> for GopherItem {
+    fn into(self) -> Mime {
+        match self {
+            Self::TextFile => mime::PLAIN,
+            Self::Submenu => mime::HTML,
+            Self::Nameserver => mime::PLAIN,
+            Self::Error => mime::PLAIN,
+            Self::BinHex => mime::BYTE_STREAM,
+            Self::Dos => mime::BYTE_STREAM,
+            Self::UuencodeFile => mime::PLAIN,
+            Self::FullTextSearch => mime::HTML,
+            Self::Telnet => mime::PLAIN,
+            Self::BinaryFile => mime::BYTE_STREAM,
+            Self::Mirror => mime::PLAIN,
+            Self::GifFile => Mime::from_str("image/gif").unwrap_or(mime::BYTE_STREAM),
+            Self::ImageFile => mime::JPEG,
+            Self::Telnet3270 => mime::PLAIN,
+            Self::BitmapFile => Mime::from_str("image/bmp").unwrap_or(mime::BYTE_STREAM),
+            Self::MovieFile => mime::BYTE_STREAM,
+            Self::SoundFile => mime::BYTE_STREAM,
+            Self::DocFile => mime::BYTE_STREAM,
+            Self::HtmlFile => mime::HTML,
+            Self::Info => mime::PLAIN,
+            Self::PngFile => mime::PNG,
+            Self::RtfFile => mime::BYTE_STREAM,
+            Self::WavFile => mime::BYTE_STREAM,
+            Self::PdfFile => Mime::from_str("application/pdf").unwrap_or(mime::BYTE_STREAM),
+            Self::XmlFile => mime::XML,
+            Self::Unknown => mime::PLAIN,
         }
     }
 }

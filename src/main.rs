@@ -7,15 +7,22 @@ use async_std::stream::StreamExt;
 use gopher::{DirEntry, GopherItem};
 use serde::Deserialize;
 use tide::{http::mime, Request};
-use tide::{log, prelude::*};
+use tide::{log, prelude::*, Body, Response};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
-const _PAGE_HTML: &str = include_str!("page.html");
+const _PAGE_HTML: &str = include_str!("../static/page.html");
 
 #[derive(Deserialize)]
 struct ProxyReq {
     url: String,
+    #[serde(alias = "t", default = "default_type")]
+    item_type: char,
+}
+
+fn default_type() -> char {
+    let d = GopherItem::Submenu;
+    d.into()
 }
 
 #[derive(Serialize)]
@@ -61,9 +68,46 @@ async fn proxy_req(req: Request<()>) -> tide::Result {
         let _ = url.set_port(Some(70));
     }
 
+    match GopherItem::from(r.item_type) {
+        GopherItem::Submenu => render_submenu(url).await,
+        GopherItem::TextFile => render_text(url).await,
+        t => proxy_file(url, t).await,
+    }
+}
+
+async fn proxy_file(url: Url, t: GopherItem) -> tide::Result {
+    let response = gopher::fetch_url(url).await?;
+    let mut r = Body::from_reader(response, None);
+    r.set_mime(t);
+    Ok(r.into())
+}
+
+async fn render_text(url: Url) -> tide::Result {
+    let mut body = String::new();
+    body.push_str("<pre>\n");
+    let mut lines = gopher::fetch_url(url).await?.lines();
+
+    while let Some(Ok(line)) = lines.next().await {
+        if line == "." {
+            break;
+        }
+        body.push_str(&line);
+        body.push_str("\n");
+    }
+    body.push_str("</pre>");
+    Ok(tide::Response::builder(200)
+        .body(render_page(PageTemplate {
+            title: String::from("port70"),
+            body: body,
+        })?)
+        .content_type(mime::HTML)
+        .build())
+}
+
+async fn render_submenu(url: Url) -> tide::Result {
     let mut body = String::new();
     let mut response = gopher::fetch_url(url).await?.lines();
-    let mut is_para = false;
+    // let mut is_para = false;
     // body.push_str("<table>\n");
     // while let Some(rline) = response.next().await {
     //     let line = rline.unwrap_or_default();
@@ -110,12 +154,17 @@ async fn proxy_req(req: Request<()>) -> tide::Result {
             }
             _ => body.push_str("<td></td>"),
         }
-        body.push_str("<td>");
+        body.push_str("<td><pre>");
         match entry.url {
-            Some(url) => body.push_str(&format!("<a href=\"{}\">{}</a>\n", url, entry.label)),
+            Some(url) => body.push_str(&format!(
+                "<a href=\"/proxy?url={}&t={}\">{}</a>\n",
+                urlencoding::encode(&url.to_string()),
+                Into::<char>::into(entry.item_type),
+                entry.label
+            )),
             None => body.push_str(&format!("{}\n", entry.label)),
         }
-        body.push_str("</td></tr>\n");
+        body.push_str("</pre></td></tr>\n");
     }
     body.push_str("</table>\n");
     Ok(tide::Response::builder(200)
@@ -141,6 +190,7 @@ async fn main() -> Result<(), std::io::Error> {
     app.at("/").get(root);
     app.at("/proxy").get(proxy_req);
     app.at("/proxy/*").get(proxy_redirect);
+    app.at("/static").serve_dir("static/")?;
     app.listen("127.0.0.1:8080").await?;
     Ok(())
 }
