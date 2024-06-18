@@ -71,10 +71,21 @@ async fn proxy_req(req: Request<()>) -> tide::Result {
         let _ = url.set_port(Some(70));
     }
 
-    match GopherItem::from(r.item_type) {
+    let result = match GopherItem::from(r.item_type) {
         GopherItem::Submenu => render_submenu(url).await,
         GopherItem::TextFile => render_text(url).await,
         t => proxy_file(url, t).await,
+    };
+
+    match result {
+        Ok(resp) => Ok(resp),
+        Err(err) => Ok(tide::Response::builder(200)
+            .body(render_page(PageTemplate {
+                title: String::from("proxy70"),
+                body: format!("<pre>error loading resource: {:} </pre>", err),
+            })?)
+            .content_type(mime::HTML)
+            .build()),
     }
 }
 
