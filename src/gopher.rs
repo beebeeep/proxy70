@@ -188,7 +188,7 @@ impl DirEntry {
         match &self.url {
             Some(url) => match url.scheme() {
                 "gopher" => Some(format!(
-                    "/?url={}&t={}",
+                    "?url={}&t={}",
                     urlencoding::encode(&url.to_string()),
                     Into::<char>::into(self.item_type.clone()),
                 )),
@@ -199,7 +199,7 @@ impl DirEntry {
     }
 }
 
-pub async fn fetch_url(url: Url) -> Result<BufReader<TcpStream>, anyhow::Error> {
+pub async fn fetch_url(url: &Url) -> Result<BufReader<TcpStream>, anyhow::Error> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
         url.host().unwrap(),

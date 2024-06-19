@@ -7,8 +7,9 @@ use async_std::stream::StreamExt;
 use clap::Parser;
 use gopher::GopherItem;
 use serde::Deserialize;
-use tide::{http::mime, Request};
-use tide::{log, prelude::*, Body};
+use tide::utils::After;
+use tide::{http::mime, Request, Response};
+use tide::{prelude::*, Body};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
@@ -70,9 +71,7 @@ async fn root(req: Request<()>) -> tide::Result {
                 url_str = format!("gopher://{}", url_str);
             }
 
-            log::info!("got url {}", url_str);
             let mut url = Url::parse(&url_str)?;
-            log::info!("parsed url {}", url);
             if url.port().is_none() {
                 let _ = url.set_port(Some(70));
             }
@@ -80,7 +79,7 @@ async fn root(req: Request<()>) -> tide::Result {
             let result = match GopherItem::from(r.item_type.unwrap_or(GopherItem::Submenu.into())) {
                 GopherItem::Submenu => render_submenu(url).await,
                 GopherItem::TextFile => render_text(url).await,
-                t => proxy_file(url, t).await,
+                t => proxy_file(&url, t).await,
             };
 
             match result {
@@ -97,17 +96,26 @@ async fn root(req: Request<()>) -> tide::Result {
     }
 }
 
-async fn proxy_file(url: Url, t: GopherItem) -> tide::Result {
+async fn proxy_file(url: &Url, t: GopherItem) -> tide::Result {
     let response = gopher::fetch_url(url).await?;
-    let mut r = Body::from_reader(response, None);
-    r.set_mime(t);
-    Ok(r.into())
+    let body = Body::from_reader(response, None);
+    let mut builder = tide::Response::builder(200);
+    if let Some(s) = url.path_segments() {
+        if let Some(filename) = s.last() {
+            builder = builder.header(
+                "Content-disposition",
+                format!("attachement; filename=\"{}\"", filename),
+            );
+        }
+    }
+
+    Ok(builder.body(body).content_type(t).build())
 }
 
 async fn render_text(url: Url) -> tide::Result {
     let mut body = String::new();
-    body.push_str("<pre id=\"pre_content\">\n");
-    let mut lines = gopher::fetch_url(url).await?.lines();
+    body.push_str("<pre>\n");
+    let mut lines = gopher::fetch_url(&url).await?.lines();
 
     while let Some(Ok(line)) = lines.next().await {
         if line == "." {
@@ -128,7 +136,7 @@ async fn render_text(url: Url) -> tide::Result {
 
 async fn render_submenu(url: Url) -> tide::Result {
     let mut body = String::new();
-    let mut response = gopher::fetch_url(url).await?.lines();
+    let mut response = gopher::fetch_url(&url).await?.lines();
     body.push_str("<table>\n");
     let mut paragraph = String::new();
     while let Some(Ok(line)) = response.next().await {
@@ -173,7 +181,7 @@ async fn render_submenu(url: Url) -> tide::Result {
             _ => body.push_str("<td></td>"),
         }
 
-        body.push_str("<td><pre id=\">");
+        body.push_str("<td><pre>");
         match entry.to_href() {
             Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label)),
             None => body.push_str(&format!("{}", entry.label)),
@@ -209,6 +217,15 @@ async fn main() -> Result<(), std::io::Error> {
 
     app.at("/").get(root);
     app.at("/static").serve_dir("static/")?;
+    app.with(After(|mut resp: Response| async move {
+        // TODO: check for gopher error (entry type 3)
+        let body = Body::empty();
+        let b = Response::builder(resp.status()).body(body.chain(resp.take_body()));
+        // TODO: copy headers, content-type etc
+
+        Ok(b.build())
+    }));
+
     app.listen(args.listen_addr).await?;
     Ok(())
 }
