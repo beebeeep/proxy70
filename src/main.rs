@@ -1,12 +1,10 @@
 mod gopher;
 
-
-
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
-
-use async_std::stream::{StreamExt};
+use async_std::stream::StreamExt;
+use clap::Parser;
 use gopher::GopherItem;
 use serde::Deserialize;
 use tide::{http::mime, Request};
@@ -21,6 +19,14 @@ struct ProxyReq {
     url: String,
     #[serde(alias = "t", default = "default_type")]
     item_type: char,
+}
+
+#[doc(hidden)]
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, default_value_t = String::from("localhost:8080"))]
+    listen_addr: String,
 }
 
 fn default_type() -> char {
@@ -194,6 +200,7 @@ async fn proxy_redirect(req: Request<()>) -> tide::Result {
 #[async_std::main]
 async fn main() -> Result<(), std::io::Error> {
     femme::start();
+    let args = Args::parse();
 
     let mut app = tide::new();
     app.with(tide::log::LogMiddleware::new());
@@ -202,6 +209,6 @@ async fn main() -> Result<(), std::io::Error> {
     app.at("/proxy").get(proxy_req);
     app.at("/proxy/*").get(proxy_redirect);
     app.at("/static").serve_dir("static/")?;
-    app.listen("127.0.0.1:8080").await?;
+    app.listen(args.listen_addr).await?;
     Ok(())
 }
