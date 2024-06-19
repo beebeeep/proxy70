@@ -188,7 +188,7 @@ impl DirEntry {
         match &self.url {
             Some(url) => match url.scheme() {
                 "gopher" => Some(format!(
-                    "/proxy?url={}&t={}",
+                    "/?url={}&t={}",
                     urlencoding::encode(&url.to_string()),
                     Into::<char>::into(self.item_type.clone()),
                 )),

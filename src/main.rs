@@ -8,7 +8,7 @@ use clap::Parser;
 use gopher::GopherItem;
 use serde::Deserialize;
 use tide::{http::mime, Request};
-use tide::{prelude::*, Body};
+use tide::{log, prelude::*, Body};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
@@ -16,9 +16,9 @@ const _PAGE_HTML: &str = include_str!("../static/page.html");
 
 #[derive(Deserialize)]
 struct ProxyReq {
-    url: String,
-    #[serde(alias = "t", default = "default_type")]
-    item_type: char,
+    url: Option<String>,
+    #[serde(alias = "t")]
+    item_type: Option<char>,
 }
 
 #[doc(hidden)]
@@ -27,11 +27,6 @@ struct ProxyReq {
 struct Args {
     #[arg(short, long, default_value_t = String::from("localhost:8080"))]
     listen_addr: String,
-}
-
-fn default_type() -> char {
-    let d = GopherItem::Submenu;
-    d.into()
 }
 
 #[derive(Serialize)]
@@ -46,10 +41,10 @@ fn render_page(tpl: PageTemplate) -> Result<String, anyhow::Error> {
     Ok(tt.render("page", &tpl)?)
 }
 
-async fn root(mut _req: Request<()>) -> tide::Result {
+async fn render_nav(mut _req: Request<()>) -> tide::Result {
     let body = String::from(
         r#"
-    <form action="proxy" method="get">
+    <form action="/" method="get">
         <label for="url">gopher://</label>
         <input name="url" id="url" type="text">
         <input type="submit" value="Go">
@@ -66,32 +61,39 @@ async fn root(mut _req: Request<()>) -> tide::Result {
     Ok(resp)
 }
 
-async fn proxy_req(req: Request<()>) -> tide::Result {
-    let mut r: ProxyReq = req.query()?;
-    if !r.url.starts_with("gopher://") {
-        r.url = format!("gopher://{}", r.url);
-    }
+async fn root(req: Request<()>) -> tide::Result {
+    let r: ProxyReq = req.query()?;
+    match r.url {
+        None => render_nav(req).await,
+        Some(mut url_str) => {
+            if !url_str.starts_with("gopher://") {
+                url_str = format!("gopher://{}", url_str);
+            }
 
-    let mut url = Url::parse(&r.url)?;
-    if url.port().is_none() {
-        let _ = url.set_port(Some(70));
-    }
+            log::info!("got url {}", url_str);
+            let mut url = Url::parse(&url_str)?;
+            log::info!("parsed url {}", url);
+            if url.port().is_none() {
+                let _ = url.set_port(Some(70));
+            }
 
-    let result = match GopherItem::from(r.item_type) {
-        GopherItem::Submenu => render_submenu(url).await,
-        GopherItem::TextFile => render_text(url).await,
-        t => proxy_file(url, t).await,
-    };
+            let result = match GopherItem::from(r.item_type.unwrap_or(GopherItem::Submenu.into())) {
+                GopherItem::Submenu => render_submenu(url).await,
+                GopherItem::TextFile => render_text(url).await,
+                t => proxy_file(url, t).await,
+            };
 
-    match result {
-        Ok(resp) => Ok(resp),
-        Err(err) => Ok(tide::Response::builder(200)
-            .body(render_page(PageTemplate {
-                title: String::from("proxy70"),
-                body: format!("<pre>error loading resource: {:} </pre>", err),
-            })?)
-            .content_type(mime::HTML)
-            .build()),
+            match result {
+                Ok(resp) => Ok(resp),
+                Err(err) => Ok(tide::Response::builder(200)
+                    .body(render_page(PageTemplate {
+                        title: String::from("proxy70"),
+                        body: format!("<pre>error loading resource: {:} </pre>", err),
+                    })?)
+                    .content_type(mime::HTML)
+                    .build()),
+            }
+        }
     }
 }
 
@@ -104,7 +106,7 @@ async fn proxy_file(url: Url, t: GopherItem) -> tide::Result {
 
 async fn render_text(url: Url) -> tide::Result {
     let mut body = String::new();
-    body.push_str("<pre>\n");
+    body.push_str("<pre id=\"pre_content\">\n");
     let mut lines = gopher::fetch_url(url).await?.lines();
 
     while let Some(Ok(line)) = lines.next().await {
@@ -140,7 +142,7 @@ async fn render_submenu(url: Url) -> tide::Result {
             // consume any subsequent Info items into single paragraph
             // to make sure pseudographics in menus is shown as intended
             if paragraph.is_empty() {
-                paragraph.push_str("<tr><td></td><td><pre>");
+                paragraph.push_str("<tr><td></td><td><pre id=\"pre_content\">");
             }
             paragraph.push_str(format!("{}\n", &entry.label).as_str());
             continue;
@@ -171,7 +173,7 @@ async fn render_submenu(url: Url) -> tide::Result {
             _ => body.push_str("<td></td>"),
         }
 
-        body.push_str("<td><pre>");
+        body.push_str("<td><pre id=\">");
         match entry.to_href() {
             Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label)),
             None => body.push_str(&format!("{}", entry.label)),
@@ -206,8 +208,6 @@ async fn main() -> Result<(), std::io::Error> {
     app.with(tide::log::LogMiddleware::new());
 
     app.at("/").get(root);
-    app.at("/proxy").get(proxy_req);
-    app.at("/proxy/*").get(proxy_redirect);
     app.at("/static").serve_dir("static/")?;
     app.listen(args.listen_addr).await?;
     Ok(())
