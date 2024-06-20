@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+
 use async_std::{
     io::{BufReader, WriteExt},
     net::TcpStream,
@@ -140,7 +141,6 @@ impl Into<Mime> for GopherItem {
     }
 }
 
-#[derive(Debug)]
 pub struct DirEntry {
     pub item_type: GopherItem,
     pub label: String,
@@ -181,9 +181,7 @@ impl DirEntry {
             },
         }
     }
-}
 
-impl DirEntry {
     pub fn to_href(&self) -> Option<String> {
         match &self.url {
             Some(url) => match url.scheme() {
@@ -206,9 +204,9 @@ pub async fn fetch_url(url: &Url) -> Result<BufReader<TcpStream>, anyhow::Error>
         url.port().unwrap_or(70),
     ))
     .await?;
-    // let mut result = Vec::new();
+    let selector = urlencoding::decode(url.path())?;
     stream
-        .write_all(format!("{}\r\n", url.path()).as_bytes())
+        .write_all(format!("{}\r\n", selector).as_bytes())
         .await?;
     let buf = BufReader::new(stream);
     Ok(buf)

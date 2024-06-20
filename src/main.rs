@@ -3,9 +3,10 @@ mod gopher;
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
+use async_std::io::{ReadExt};
 use async_std::stream::StreamExt;
 use clap::Parser;
-use gopher::GopherItem;
+use gopher::{DirEntry, GopherItem};
 use serde::Deserialize;
 use tide::utils::After;
 use tide::{http::mime, Request, Response};
@@ -168,6 +169,23 @@ async fn render_submenu(url: Url) -> tide::Result {
             GopherItem::TextFile => {
                 body.push_str(format!("<td><i class=\"fa fa-file-text-o\"></i></td>").as_str());
             }
+            GopherItem::FullTextSearch => {
+                body.push_str(
+                    format!(
+                        r#"<td><i class="fa fa-search"></i></td>
+                           <td><form action="/" method="get">
+                               <input name="search" id="search" placeholder="{}" type="text">
+                               <input type="hidden" id="selector" value="{}">
+                               <input type="submit" value="Submit">
+                           </form></td><tr>"#,
+                        entry.label,
+                        entry.url.unwrap().path()
+                    )
+                    .as_str(),
+                );
+                // TODO: implement search handling
+                continue;
+            }
             GopherItem::ImageFile => {
                 body.push_str(
                     format!(
@@ -203,10 +221,6 @@ async fn render_submenu(url: Url) -> tide::Result {
         .build())
 }
 
-async fn proxy_redirect(req: Request<()>) -> tide::Result {
-    Ok(format!("request to {}", req.url()).into())
-}
-
 #[async_std::main]
 async fn main() -> Result<(), std::io::Error> {
     femme::start();
@@ -218,10 +232,38 @@ async fn main() -> Result<(), std::io::Error> {
     app.at("/").get(root);
     app.at("/static").serve_dir("static/")?;
     app.with(After(|mut resp: Response| async move {
-        // TODO: check for gopher error (entry type 3)
-        let body = Body::empty();
-        let b = Response::builder(resp.status()).body(body.chain(resp.take_body()));
-        // TODO: copy headers, content-type etc
+        /*
+           Since gopher has no way to specify any metadata in its response,
+           so instead of actual content there may be a dir entry with error.
+           This middleware peeks into resulting response body to see if it is
+           possible to parse it into dir entry and whether there is an error.
+           If not, returns original content.
+        */
+        let mut body = resp.take_body();
+        let mut buf = vec![0; 256];
+        body.read(&mut buf).await?;
+        if let Ok(first_line) = String::from_utf8(buf.clone()) {
+            match DirEntry::from(first_line.as_str()) {
+                entry if entry.item_type == GopherItem::Error => {
+                    return Ok(tide::Response::builder(200)
+                        .body(render_page(PageTemplate {
+                            title: String::from("proxy70"),
+                            body: String::from(format!("<pre>{}</pre>", entry.label,)),
+                        })?)
+                        .content_type(mime::HTML)
+                        .build())
+                }
+                _ => {}
+            }
+        }
+
+        let new_body = Body::from(buf).chain(body);
+        let mut b = Response::builder(resp.status())
+            .body(new_body)
+            .content_type(resp.content_type().unwrap_or(mime::HTML));
+        for header in resp.header_names() {
+            b = b.header(header, resp.header(header).unwrap());
+        }
 
         Ok(b.build())
     }));

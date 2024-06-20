@@ -17,6 +17,11 @@ table {
     margin: 1.5rem 0;
 }
 
+input,
+label {
+    font-family: monospace;
+}
+
 td,
 th {
     text-align: start;
