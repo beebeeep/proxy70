@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-
 use async_std::{
     io::{BufReader, WriteExt},
     net::TcpStream,
@@ -197,17 +196,21 @@ impl DirEntry {
     }
 }
 
-pub async fn fetch_url(url: &Url) -> Result<BufReader<TcpStream>, anyhow::Error> {
+pub async fn fetch_url(
+    url: &Url,
+    query: Option<String>,
+) -> Result<BufReader<TcpStream>, anyhow::Error> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
         url.host().unwrap(),
         url.port().unwrap_or(70),
     ))
     .await?;
-    let selector = urlencoding::decode(url.path())?;
-    stream
-        .write_all(format!("{}\r\n", selector).as_bytes())
-        .await?;
+    let selector = match query {
+        Some(q) => format!("{}\t{}\r\n", urlencoding::decode(url.path())?, q),
+        None => format!("{}\r\n", urlencoding::decode(url.path())?),
+    };
+    stream.write_all(selector.as_bytes()).await?;
     let buf = BufReader::new(stream);
     Ok(buf)
 }

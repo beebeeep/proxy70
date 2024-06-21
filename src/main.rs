@@ -3,7 +3,7 @@ mod gopher;
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
-use async_std::io::{ReadExt};
+use async_std::io::ReadExt;
 use async_std::stream::StreamExt;
 use clap::Parser;
 use gopher::{DirEntry, GopherItem};
@@ -21,6 +21,7 @@ struct ProxyReq {
     url: Option<String>,
     #[serde(alias = "t")]
     item_type: Option<char>,
+    query: Option<String>,
 }
 
 #[doc(hidden)]
@@ -78,7 +79,8 @@ async fn root(req: Request<()>) -> tide::Result {
             }
 
             let result = match GopherItem::from(r.item_type.unwrap_or(GopherItem::Submenu.into())) {
-                GopherItem::Submenu => render_submenu(url).await,
+                GopherItem::Submenu => render_submenu(url, None).await,
+                GopherItem::FullTextSearch => render_submenu(url, r.query).await,
                 GopherItem::TextFile => render_text(url).await,
                 t => proxy_file(&url, t).await,
             };
@@ -98,7 +100,7 @@ async fn root(req: Request<()>) -> tide::Result {
 }
 
 async fn proxy_file(url: &Url, t: GopherItem) -> tide::Result {
-    let response = gopher::fetch_url(url).await?;
+    let response = gopher::fetch_url(url, None).await?;
     let body = Body::from_reader(response, None);
     let mut builder = tide::Response::builder(200);
     if let Some(s) = url.path_segments() {
@@ -116,7 +118,7 @@ async fn proxy_file(url: &Url, t: GopherItem) -> tide::Result {
 async fn render_text(url: Url) -> tide::Result {
     let mut body = String::new();
     body.push_str("<pre>\n");
-    let mut lines = gopher::fetch_url(&url).await?.lines();
+    let mut lines = gopher::fetch_url(&url, None).await?.lines();
 
     while let Some(Ok(line)) = lines.next().await {
         if line == "." {
@@ -135,9 +137,9 @@ async fn render_text(url: Url) -> tide::Result {
         .build())
 }
 
-async fn render_submenu(url: Url) -> tide::Result {
+async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
     let mut body = String::new();
-    let mut response = gopher::fetch_url(&url).await?.lines();
+    let mut response = gopher::fetch_url(&url, query).await?.lines();
     body.push_str("<table>\n");
     let mut paragraph = String::new();
     while let Some(Ok(line)) = response.next().await {
@@ -174,12 +176,14 @@ async fn render_submenu(url: Url) -> tide::Result {
                     format!(
                         r#"<td><i class="fa fa-search"></i></td>
                            <td><form action="/" method="get">
-                               <input name="search" id="search" placeholder="{}" type="text">
-                               <input type="hidden" id="selector" value="{}">
+                               <input name="query"  placeholder="{}" type="text">
+                               <input type="hidden" name="url" value="{}">
+                               <input type="hidden" name="t" value="{}">
                                <input type="submit" value="Submit">
                            </form></td><tr>"#,
                         entry.label,
-                        entry.url.unwrap().path()
+                        &entry.url.unwrap().to_string(),
+                        Into::<char>::into(entry.item_type.clone()),
                     )
                     .as_str(),
                 );
