@@ -10,7 +10,7 @@ use gopher::{DirEntry, GopherItem};
 use serde::Deserialize;
 use tide::utils::After;
 use tide::{http::mime, Request, Response};
-use tide::{prelude::*, Body};
+use tide::{log, prelude::*, Body};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
@@ -163,6 +163,7 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
         }
 
         body.push_str("<tr>\n");
+        // draw table raw
         match entry.item_type {
             GopherItem::Unknown => continue,
             GopherItem::Submenu => {
@@ -170,6 +171,17 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
             }
             GopherItem::TextFile => {
                 body.push_str(format!("<td><i class=\"fa fa-file-text-o\"></i></td>").as_str());
+            }
+            GopherItem::HtmlFile => {
+                body.push_str(
+                    format!(
+                        "<td><i class=\"fa fa-external-link\"></i></td><td><a href=\"{}\"><pre>{}</pre></a>",
+                        entry.url.unwrap(),
+                        entry.label
+                    )
+                    .as_str(),
+                );
+                continue;
             }
             GopherItem::FullTextSearch => {
                 body.push_str(
@@ -190,7 +202,10 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
                 // TODO: implement search handling
                 continue;
             }
-            GopherItem::ImageFile => {
+            GopherItem::ImageFile
+            | GopherItem::BitmapFile
+            | GopherItem::GifFile
+            | GopherItem::PngFile => {
                 body.push_str(
                     format!(
                         "<td></td><td><img src=\"{}\" />\n</tr>",
@@ -203,6 +218,7 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
             _ => body.push_str("<td></td>"),
         }
 
+        // if we are here, just leave link to referred page
         body.push_str("<td><pre>");
         match entry.to_href() {
             Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label)),
@@ -210,6 +226,8 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
         }
         body.push_str("</pre></td></tr>\n");
     }
+
+    // mb finalize paragraph
     if !paragraph.is_empty() {
         body.push_str(format!("{}</pre></td></tr>", paragraph).as_str());
         paragraph.clear();

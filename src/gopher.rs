@@ -206,9 +206,10 @@ pub async fn fetch_url(
         url.port().unwrap_or(70),
     ))
     .await?;
+    let path = urlencoding::decode(url.path().trim_start_matches("/"))?;
     let selector = match query {
-        Some(q) => format!("{}\t{}\r\n", urlencoding::decode(url.path())?, q),
-        None => format!("{}\r\n", urlencoding::decode(url.path())?),
+        Some(q) => format!("{}\t{}\r\n", path, q),
+        None => format!("{}\r\n", path),
     };
     stream.write_all(selector.as_bytes()).await?;
     let buf = BufReader::new(stream);
@@ -219,10 +220,13 @@ fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
     let url_str: String;
     if selector.starts_with("URL:") {
         url_str = String::from(&selector[4..])
-    } else if selector.starts_with("/") {
-        url_str = format!("gopher://{}:{}{}", host, port, selector)
     } else {
-        url_str = format!("gopher://{}:{}/{}", host, port, selector)
+        url_str = format!(
+            "gopher://{}:{}/{}",
+            host,
+            port,
+            urlencoding::encode(selector)
+        )
     };
 
     match Url::parse(&url_str) {
