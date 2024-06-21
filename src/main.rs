@@ -124,7 +124,7 @@ async fn render_text(url: Url) -> tide::Result {
         if line == "." {
             break;
         }
-        body.push_str(&line);
+        body.push_str(&html_escape::encode_text(&line));
         body.push_str("\n");
     }
     body.push_str("</pre>");
@@ -148,6 +148,7 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
         }
 
         let entry = gopher::DirEntry::from(line.as_str());
+        let label = html_escape::encode_text(&entry.label);
 
         if entry.item_type == GopherItem::Info {
             // consume any subsequent Info items into single paragraph
@@ -155,7 +156,7 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
             if paragraph.is_empty() {
                 paragraph.push_str("<tr><td></td><td><pre id=\"pre_content\">");
             }
-            paragraph.push_str(format!("{}\n", &entry.label).as_str());
+            paragraph.push_str(format!("{}\n", &label).as_str());
             continue;
         } else if !paragraph.is_empty() {
             body.push_str(format!("{}</pre></td></tr>", paragraph).as_str());
@@ -177,7 +178,21 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
                     format!(
                         "<td><i class=\"fa fa-external-link\"></i></td><td><a href=\"{}\"><pre>{}</pre></a>",
                         entry.url.unwrap(),
-                        entry.label
+                        label
+                    )
+                    .as_str(),
+                );
+                continue;
+            }
+            GopherItem::WavFile | GopherItem::SoundFile => {
+                body.push_str(
+                    format!(
+                        r#"<td></td><td>
+                                <pre>{0} (<a href="{1}">download</a>)</pre>
+                                <audio controls><source src="{1}">Your browser does not support audio element.</audio>
+                            </td></tr>"#,
+                        label,
+                        entry.to_href().unwrap(),
                     )
                     .as_str(),
                 );
@@ -193,7 +208,7 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
                                <input type="hidden" name="t" value="{}">
                                <input type="submit" value="Submit">
                            </form></td><tr>"#,
-                        entry.label,
+                        label,
                         &entry.url.unwrap().to_string(),
                         Into::<char>::into(entry.item_type.clone()),
                     )
@@ -221,8 +236,8 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
         // if we are here, just leave link to referred page
         body.push_str("<td><pre>");
         match entry.to_href() {
-            Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, entry.label)),
-            None => body.push_str(&format!("{}", entry.label)),
+            Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, label)),
+            None => body.push_str(&format!("{}", label)),
         }
         body.push_str("</pre></td></tr>\n");
     }
