@@ -1,14 +1,11 @@
 mod gopher;
 
-
-
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
-
 use async_std::stream::StreamExt;
 use clap::Parser;
-use gopher::{GopherItem};
+use gopher::GopherItem;
 use serde::Deserialize;
 
 use tide::{http::mime, Request};
@@ -170,7 +167,7 @@ async fn render_submenu(url: &Url, query: Option<String>) -> tide::Result {
         }
 
         body.push_str("<tr>\n");
-        // draw table raw
+        // draw table row
         match entry.item_type {
             GopherItem::Unknown => continue,
             GopherItem::Submenu => {
@@ -220,7 +217,6 @@ async fn render_submenu(url: &Url, query: Option<String>) -> tide::Result {
                     )
                     .as_str(),
                 );
-                // TODO: implement search handling
                 continue;
             }
             GopherItem::ImageFile
