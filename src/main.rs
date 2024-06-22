@@ -268,42 +268,6 @@ async fn main() -> Result<(), std::io::Error> {
 
     app.at("/").get(root);
     app.at("/static").serve_dir("static/")?;
-    app.with(After(|mut resp: Response| async move {
-        /*
-           Since gopher has no way to specify any metadata in its response,
-           so instead of actual content there may be a dir entry with error.
-           This middleware peeks into resulting response body to see if it is
-           possible to parse it into dir entry and whether there is an error.
-           If not, returns original content.
-        */
-        let mut body = resp.take_body();
-        let mut buf = vec![0; 256];
-        body.read(&mut buf).await?;
-        if let Ok(first_line) = String::from_utf8(buf.clone()) {
-            match DirEntry::from(first_line.as_str()) {
-                entry if entry.item_type == GopherItem::Error => {
-                    return Ok(tide::Response::builder(200)
-                        .body(render_page(PageTemplate {
-                            title: String::from("proxy70"),
-                            body: String::from(format!("<pre>{}</pre>", entry.label,)),
-                        })?)
-                        .content_type(mime::HTML)
-                        .build())
-                }
-                _ => {}
-            }
-        }
-
-        let new_body = Body::from(buf).chain(body);
-        let mut b = Response::builder(resp.status())
-            .body(new_body)
-            .content_type(resp.content_type().unwrap_or(mime::HTML));
-        for header in resp.header_names() {
-            b = b.header(header, resp.header(header).unwrap());
-        }
-
-        Ok(b.build())
-    }));
 
     app.listen(args.listen_addr).await?;
     Ok(())

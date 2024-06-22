@@ -1,7 +1,11 @@
-use std::str::FromStr;
+use std::{
+    io::{self, BufRead},
+    str::FromStr,
+};
 
+use anyhow::anyhow;
 use async_std::{
-    io::{BufReader, WriteExt},
+    io::{prelude::BufReadExt, BufReader, Bytes, Cursor, Read, ReadExt, WriteExt},
     net::TcpStream,
 };
 use serde::Deserialize;
@@ -140,6 +144,7 @@ impl Into<Mime> for GopherItem {
     }
 }
 
+#[derive(Debug)]
 pub struct DirEntry {
     pub item_type: GopherItem,
     pub label: String,
@@ -196,10 +201,7 @@ impl DirEntry {
     }
 }
 
-pub async fn fetch_url(
-    url: &Url,
-    query: Option<String>,
-) -> Result<BufReader<TcpStream>, anyhow::Error> {
+pub async fn fetch_url(url: &Url, query: Option<String>) -> Result<impl BufReadExt, anyhow::Error> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
         url.host().unwrap(),
@@ -212,8 +214,29 @@ pub async fn fetch_url(
         None => format!("{}\r\n", path),
     };
     stream.write_all(selector.as_bytes()).await?;
-    let buf = BufReader::new(stream);
-    Ok(buf)
+    let mut buf = BufReader::new(stream);
+
+    /*
+       Since gopher has no way to specify any metadata in its response,
+       so instead of actual content there may be a dir entry with error.
+       To handle this, we peek into response to see if it is
+       possible to parse it into dir entry and whether there is an error.
+       If not, returns original content.
+    */
+    let mut header = vec![0; 256];
+    buf.read(&mut header).await?;
+    if let Ok(first_line) = String::from_utf8(header.clone()) {
+        match DirEntry::from(first_line.as_str()) {
+            entry if entry.item_type == GopherItem::Error => {
+                log::info!("got error fetching {}: {}", url, entry.label);
+                return Err(anyhow!(entry.label));
+            }
+            _ => {}
+        }
+    }
+    Ok(Cursor::new(header).chain(buf))
+    // BufReader::chain(self, next)
+    // Ok(buf)
 }
 
 fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
@@ -232,7 +255,7 @@ fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
     match Url::parse(&url_str) {
         Ok(url) => Some(url),
         Err(e) => {
-            log::error!("parsing url: {:}", e);
+            log::error!("parsing url '{}': {:}", url_str, e);
             None
         }
     }
