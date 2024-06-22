@@ -1,11 +1,11 @@
 use std::{
-    io::{self, BufRead},
+    io::{BufRead},
     str::FromStr,
 };
 
 use anyhow::anyhow;
 use async_std::{
-    io::{prelude::BufReadExt, BufReader, Bytes, Cursor, Read, ReadExt, WriteExt},
+    io::{prelude::BufReadExt, BufReader, Cursor, ReadExt, WriteExt},
     net::TcpStream,
 };
 use serde::Deserialize;

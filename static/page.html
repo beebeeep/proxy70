@@ -10,7 +10,16 @@
 </head>
 
 <body>
-    {body | unescaped}
+    <form action="/" method="get">
+        <input class="addr_field" name="url" id="url" type="text" value="{url}">
+        <input type="submit" value="Go">
+    </form>
+
+    <hr>
+
+    <section>
+        {body | unescaped}
+    </section>
 </body>
 
 </html>

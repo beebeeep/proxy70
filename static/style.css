@@ -17,6 +17,15 @@ table {
     margin: 1.5rem 0;
 }
 
+hr {
+    width: 100%;
+}
+
+.addr_field {
+    margin-top: 1rem;
+    width: 90%;
+}
+
 input,
 label {
     font-family: monospace;

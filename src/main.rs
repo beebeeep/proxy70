@@ -1,16 +1,18 @@
 mod gopher;
 
+
+
 use anyhow::Result;
 use async_std::io::prelude::BufReadExt;
 
-use async_std::io::ReadExt;
+
 use async_std::stream::StreamExt;
 use clap::Parser;
-use gopher::{DirEntry, GopherItem};
+use gopher::{GopherItem};
 use serde::Deserialize;
-use tide::utils::After;
-use tide::{http::mime, Request, Response};
-use tide::{log, prelude::*, Body};
+
+use tide::{http::mime, Request};
+use tide::{prelude::*, Body};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
@@ -36,6 +38,7 @@ struct Args {
 struct PageTemplate {
     title: String,
     body: String,
+    url: Option<String>,
 }
 
 fn render_page(tpl: PageTemplate) -> Result<String, anyhow::Error> {
@@ -58,6 +61,7 @@ async fn render_nav(mut _req: Request<()>) -> tide::Result {
         .body(render_page(PageTemplate {
             title: String::from("proxy70"),
             body: body,
+            url: None,
         })?)
         .content_type(mime::HTML)
         .build();
@@ -79,9 +83,9 @@ async fn root(req: Request<()>) -> tide::Result {
             }
 
             let result = match GopherItem::from(r.item_type.unwrap_or(GopherItem::Submenu.into())) {
-                GopherItem::Submenu => render_submenu(url, None).await,
-                GopherItem::FullTextSearch => render_submenu(url, r.query).await,
-                GopherItem::TextFile => render_text(url).await,
+                GopherItem::Submenu => render_submenu(&url, None).await,
+                GopherItem::FullTextSearch => render_submenu(&url, r.query).await,
+                GopherItem::TextFile => render_text(&url).await,
                 t => proxy_file(&url, t).await,
             };
 
@@ -91,6 +95,7 @@ async fn root(req: Request<()>) -> tide::Result {
                     .body(render_page(PageTemplate {
                         title: String::from("proxy70"),
                         body: format!("<pre>error loading resource: {:} </pre>", err),
+                        url: format_gopher_url(&url, GopherItem::Error),
                     })?)
                     .content_type(mime::HTML)
                     .build()),
@@ -115,7 +120,7 @@ async fn proxy_file(url: &Url, t: GopherItem) -> tide::Result {
     Ok(builder.body(body).content_type(t).build())
 }
 
-async fn render_text(url: Url) -> tide::Result {
+async fn render_text(url: &Url) -> tide::Result {
     let mut body = String::new();
     body.push_str("<pre>\n");
     let mut lines = gopher::fetch_url(&url, None).await?.lines();
@@ -132,12 +137,13 @@ async fn render_text(url: Url) -> tide::Result {
         .body(render_page(PageTemplate {
             title: String::from("proxy70"),
             body: body,
+            url: format_gopher_url(&url, GopherItem::TextFile),
         })?)
         .content_type(mime::HTML)
         .build())
 }
 
-async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
+async fn render_submenu(url: &Url, query: Option<String>) -> tide::Result {
     let mut body = String::new();
     let mut response = gopher::fetch_url(&url, query).await?.lines();
     body.push_str("<table>\n");
@@ -253,9 +259,32 @@ async fn render_submenu(url: Url, query: Option<String>) -> tide::Result {
         .body(render_page(PageTemplate {
             title: String::from("proxy70"),
             body: body,
+            url: format_gopher_url(&url, GopherItem::Submenu),
         })?)
         .content_type(mime::HTML)
         .build())
+}
+
+fn format_gopher_url(url: &Url, t: GopherItem) -> Option<String> {
+    let mut path = match urlencoding::decode(url.path()) {
+        Ok(p) => p.into_owned(),
+        Err(_) => url.path().to_string(),
+    };
+    if path.starts_with("//") {
+        path = path.strip_prefix("/").unwrap().to_string();
+    }
+    // this isn't quite the format for gopher URLs as described by IETF (*),
+    // but it seems to be used throughout gopherspace and undestood by clients.
+    // (*) everybody will agree that IETF had a stupid idea
+    // of using tab characters as separators in URL.
+    Some(format!(
+        "{}://{}:{}/{}{}",
+        url.scheme(),
+        url.host()?,
+        url.port().unwrap_or(70),
+        Into::<char>::into(t),
+        path,
+    ))
 }
 
 #[async_std::main]
