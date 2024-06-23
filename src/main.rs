@@ -9,11 +9,12 @@ use gopher::GopherItem;
 use serde::Deserialize;
 
 use tide::{http::mime, Request};
-use tide::{prelude::*, Body};
+use tide::{log, prelude::*, Body};
 use tinytemplate::TinyTemplate;
 use url::Url;
 
 const _PAGE_HTML: &str = include_str!("../static/page.html");
+const _WELCOME_HTML: &str = include_str!("../static/welcome.html");
 
 #[derive(Deserialize)]
 struct ProxyReq {
@@ -45,19 +46,10 @@ fn render_page(tpl: PageTemplate) -> Result<String, anyhow::Error> {
 }
 
 async fn render_nav(mut _req: Request<()>) -> tide::Result {
-    let body = String::from(
-        r#"
-    <form action="/" method="get">
-        <label for="url">gopher://</label>
-        <input name="url" id="url" type="text">
-        <input type="submit" value="Go">
-    </form>"#,
-    );
-
     let resp = tide::Response::builder(200)
         .body(render_page(PageTemplate {
             title: String::from("proxy70"),
-            body: body,
+            body: String::from(_WELCOME_HTML),
             url: None,
         })?)
         .content_type(mime::HTML)
@@ -142,114 +134,14 @@ async fn render_text(url: &Url) -> tide::Result {
 
 async fn render_submenu(url: &Url, query: Option<String>) -> tide::Result {
     let mut body = String::new();
-    let mut response = gopher::fetch_url(&url, query).await?.lines();
+    let menu = gopher::Menu::from_url(&url, query).await?;
     body.push_str("<table>\n");
-    let mut paragraph = String::new();
-    while let Some(Ok(line)) = response.next().await {
-        if line == "." {
-            break;
-        }
-
-        let entry = gopher::DirEntry::from(line.as_str());
-        let label = html_escape::encode_text(&entry.label);
-
-        if entry.item_type == GopherItem::Info {
-            // consume any subsequent Info items into single paragraph
-            // to make sure pseudographics in menus is shown as intended
-            if paragraph.is_empty() {
-                paragraph.push_str("<tr><td></td><td><pre id=\"pre_content\">");
-            }
-            paragraph.push_str(format!("{}\n", &label).as_str());
-            continue;
-        } else if !paragraph.is_empty() {
-            body.push_str(format!("{}</pre></td></tr>", paragraph).as_str());
-            paragraph.clear();
-        }
-
-        body.push_str("<tr>\n");
-        // draw table row
-        match entry.item_type {
-            GopherItem::Unknown => continue,
-            GopherItem::Submenu => {
-                body.push_str(format!("<td><i class=\"fa fa-folder-o\"></i></td>").as_str());
-            }
-            GopherItem::TextFile => {
-                body.push_str(format!("<td><i class=\"fa fa-file-text-o\"></i></td>").as_str());
-            }
-            GopherItem::HtmlFile => {
-                body.push_str(
-                    format!(
-                        "<td><i class=\"fa fa-external-link\"></i></td><td><a href=\"{}\"><pre>{}</pre></a>",
-                        entry.url.unwrap(),
-                        label
-                    )
-                    .as_str(),
-                );
-                continue;
-            }
-            GopherItem::WavFile | GopherItem::SoundFile => {
-                body.push_str(
-                    format!(
-                        r#"<td></td><td>
-                                <pre>{0} (<a href="{1}">download</a>)</pre>
-                                <audio controls><source src="{1}">Your browser does not support audio element.</audio>
-                            </td></tr>"#,
-                        label,
-                        entry.to_href().unwrap(),
-                    )
-                    .as_str(),
-                );
-                continue;
-            }
-            GopherItem::FullTextSearch => {
-                body.push_str(
-                    format!(
-                        r#"<td><i class="fa fa-search"></i></td>
-                           <td><form action="/" method="get">
-                               <input name="query"  placeholder="{}" type="text">
-                               <input type="hidden" name="url" value="{}">
-                               <input type="hidden" name="t" value="{}">
-                               <input type="submit" value="Submit">
-                           </form></td><tr>"#,
-                        label,
-                        &entry.url.unwrap().to_string(),
-                        Into::<char>::into(entry.item_type.clone()),
-                    )
-                    .as_str(),
-                );
-                continue;
-            }
-            GopherItem::ImageFile
-            | GopherItem::BitmapFile
-            | GopherItem::GifFile
-            | GopherItem::PngFile => {
-                body.push_str(
-                    format!(
-                        "<td></td><td><img src=\"{}\" />\n</tr>",
-                        entry.to_href().unwrap()
-                    )
-                    .as_str(),
-                );
-                continue;
-            }
-            _ => body.push_str("<td></td>"),
-        }
-
-        // if we are here, just leave link to referred page
-        body.push_str("<td><pre>");
-        match entry.to_href() {
-            Some(href) => body.push_str(&format!("<a href=\"{}\">{}</a>", href, label)),
-            None => body.push_str(&format!("{}", label)),
-        }
-        body.push_str("</pre></td></tr>\n");
+    for item in menu.items {
+        log::info!("item {}", item.label);
+        body.push_str(
+            format!("<tr>{}</tr>", item.format_row().unwrap_or(String::from(""))).as_str(),
+        )
     }
-
-    // mb finalize paragraph
-    if !paragraph.is_empty() {
-        body.push_str(format!("{}</pre></td></tr>", paragraph).as_str());
-        paragraph.clear();
-    }
-
     body.push_str("</table>\n");
     Ok(tide::Response::builder(200)
         .body(render_page(PageTemplate {

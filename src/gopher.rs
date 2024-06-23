@@ -1,9 +1,7 @@
-use std::{
-    io::{BufRead},
-    str::FromStr,
-};
+use std::{io::BufRead, str::FromStr};
 
 use anyhow::anyhow;
+use async_std::stream::StreamExt;
 use async_std::{
     io::{prelude::BufReadExt, BufReader, Cursor, ReadExt, WriteExt},
     net::TcpStream,
@@ -198,6 +196,101 @@ impl DirEntry {
             },
             None => None,
         }
+    }
+
+    fn format_label(&self) -> String {
+        match self.to_href() {
+            Some(url) => format!(
+                r#"<pre><a href="{}"">{}</a></pre>"#,
+                url,
+                html_escape::encode_text(&self.label)
+            ),
+            None => format!("<pre>{}</pre>", html_escape::encode_text(&self.label)),
+        }
+    }
+
+    pub fn format_row(&self) -> Option<String> {
+        match self.item_type {
+            GopherItem::Unknown => None,
+            GopherItem::Info => Some(format!("<td></td><td>{}</td>", self.format_label())),
+            GopherItem::Submenu => Some(format!(
+                "<td><i class=\"fa fa-folder-o\"></i></td><td>{}</td>",
+                self.format_label()
+            )),
+            GopherItem::TextFile => Some(format!(
+                "<td><i class=\"fa fa-file-text-o\"></i></td><td>{}</td>",
+                self.format_label()
+            )),
+            GopherItem::HtmlFile => Some(format!(
+                "<td><i class=\"fa fa-external-link\"></i></td><td>{}</td>",
+                self.format_label()
+            )),
+            GopherItem::WavFile | GopherItem::SoundFile => Some(format!(
+                r#"<td></td><td>
+                    <pre>{0} (<a href="{1}">download</a>)</pre>
+                    <audio controls><source src="{1}">Your browser does not support audio element.</audio>
+                </td></tr>"#,
+                html_escape::encode_text(&self.label),
+                self.to_href().unwrap(),
+            )),
+            GopherItem::FullTextSearch => Some(format!(
+                r#"<td><i class="fa fa-search"></i></td>
+                    <td><form action="/" method="get">
+                        <input name="query"  placeholder="{}" type="text">
+                        <input type="hidden" name="url" value="{}">
+                        <input type="hidden" name="t" value="{}">
+                        <input type="submit" value="Submit">
+                    </form></td><tr>"#,
+                html_escape::encode_text(&self.label),
+                self.url.as_ref().unwrap().to_string(),
+                Into::<char>::into(self.item_type.clone()),
+            )),
+            GopherItem::ImageFile
+            | GopherItem::BitmapFile
+            | GopherItem::GifFile
+            | GopherItem::PngFile => Some(format!(
+                "<td></td><td><img src=\"{}\" />\n</tr>",
+                self.to_href().unwrap()
+            )),
+            _ => Some(format!(
+                "<td><i class=\"fa fa-file-o\"></i></td><td>{}</td>",
+                self.format_label()
+            )),
+        }
+    }
+}
+
+pub struct Menu {
+    pub items: Vec<DirEntry>,
+}
+
+impl Menu {
+    pub async fn from_url(url: &Url, query: Option<String>) -> Result<Self, anyhow::Error> {
+        let mut items: Vec<DirEntry> = Vec::new();
+        let mut response = fetch_url(&url, query).await?.lines();
+        while let Some(Ok(line)) = response.next().await {
+            if line == "." {
+                break;
+            }
+            let entry = DirEntry::from(line.as_str());
+            match entry.item_type {
+                GopherItem::Info => {
+                    if let Some(item) = items.last_mut() {
+                        // merge subsequent info items into one paragraph
+                        // to preserve whatever pseudographic may be there
+                        if item.item_type == GopherItem::Info {
+                            log::info!("pushing {}", entry.label);
+                            item.label.push_str(format!("\n{}", entry.label).as_str());
+                            continue;
+                        }
+                    }
+                    items.push(entry)
+                }
+                _ => items.push(entry),
+            }
+        }
+
+        Ok(Self { items: items })
     }
 }
 
