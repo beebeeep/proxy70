@@ -1,4 +1,5 @@
-use std::{io::BufRead, str::FromStr};
+use std::fmt::Display;
+use std::str::FromStr;
 
 use anyhow::anyhow;
 use async_std::stream::StreamExt;
@@ -142,11 +143,101 @@ impl Into<Mime> for GopherItem {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GopherURL {
+    pub host: String,
+    pub port: u16,
+    pub gopher_type: GopherItem,
+    pub selector: String,
+}
+
+impl From<&str> for GopherURL {
+    fn from(url_str: &str) -> Self {
+        match Url::parse(url_str) {
+            Ok(url) => GopherURL::from(&url),
+            Err(e) => {
+                log::error!("parsing url: {}", e);
+                Self {
+                    host: String::new(),
+                    port: 0,
+                    gopher_type: GopherItem::Unknown,
+                    selector: String::new(),
+                }
+            }
+        }
+    }
+}
+
+impl From<&Url> for GopherURL {
+    fn from(url: &Url) -> Self {
+        let mut r = Self {
+            host: url.host().unwrap().to_string(),
+            port: url.port().unwrap_or(70),
+            gopher_type: GopherItem::Submenu,
+            selector: String::from(""),
+        };
+        if let Some(mut segments) = url.path_segments() {
+            if let Some(t_str) = segments.next() {
+                r.gopher_type = GopherItem::from(t_str.chars().next().unwrap_or('?'));
+                r.selector = segments.fold(String::from(""), |acc, x| format!("{}/{}", acc, x));
+            }
+        }
+        r
+    }
+}
+
+impl Display for GopherURL {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", Into::<Url>::into(self.clone()))
+    }
+}
+
+impl Into<Url> for GopherURL {
+    fn into(self) -> Url {
+        // this isn't quite the format for gopher URLs as described by IETF (*),
+        // but it seems to be used throughout gopherspace and undestood by clients.
+        // (*) everybody will agree that IETF had a stupid idea
+        // of using tab characters as separators in URL.
+        Url::parse(
+            format!(
+                "gopher://{}:{}/{}/{}",
+                self.host,
+                self.port,
+                Into::<char>::into(self.gopher_type),
+                // TODO: this may break if gopher server will decide to use
+                // really funny selectors
+                self.selector.trim_start_matches("/"),
+            )
+            .as_str(),
+        )
+        .unwrap()
+    }
+}
+
+impl GopherURL {
+    fn new(host: &str, port: &str, item_type: &GopherItem, selector: &str) -> Self {
+        Self {
+            host: String::from(host),
+            port: port.parse().unwrap_or(70),
+            gopher_type: item_type.clone(),
+            selector: String::from(selector),
+        }
+    }
+
+    fn to_href(&self) -> String {
+        if self.selector.starts_with("URL:") {
+            String::from(&self.selector[4..])
+        } else {
+            format!("?url={}", urlencoding::encode(&self.to_string()))
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct DirEntry {
     pub item_type: GopherItem,
     pub label: String,
-    pub url: Option<Url>,
+    pub url: Option<GopherURL>,
 }
 
 impl From<&str> for DirEntry {
@@ -179,21 +270,14 @@ impl DirEntry {
             _ => DirEntry {
                 item_type,
                 label: String::from(label),
-                url: get_url(selector, host, port),
+                url: Some(GopherURL::new(host, port, &item_type, selector)),
             },
         }
     }
 
     pub fn to_href(&self) -> Option<String> {
         match &self.url {
-            Some(url) => match url.scheme() {
-                "gopher" => Some(format!(
-                    "?url={}&t={}",
-                    urlencoding::encode(&url.to_string()),
-                    Into::<char>::into(self.item_type.clone()),
-                )),
-                _ => Some(url.to_string()),
-            },
+            Some(url) => Some(url.to_href()),
             None => None,
         }
     }
@@ -265,7 +349,7 @@ pub struct Menu {
 }
 
 impl Menu {
-    pub async fn from_url(url: &Url, query: Option<String>) -> Result<Self, anyhow::Error> {
+    pub async fn from_url(url: &GopherURL, query: Option<String>) -> Result<Self, anyhow::Error> {
         let mut items: Vec<DirEntry> = Vec::new();
         let mut response = fetch_url(&url, query).await?.lines();
         while let Some(Ok(line)) = response.next().await {
@@ -279,7 +363,6 @@ impl Menu {
                         // merge subsequent info items into one paragraph
                         // to preserve whatever pseudographic may be there
                         if item.item_type == GopherItem::Info {
-                            log::info!("pushing {}", entry.label);
                             item.label.push_str(format!("\n{}", entry.label).as_str());
                             continue;
                         }
@@ -294,17 +377,14 @@ impl Menu {
     }
 }
 
-pub async fn fetch_url(url: &Url, query: Option<String>) -> Result<impl BufReadExt, anyhow::Error> {
-    let mut stream = TcpStream::connect(format!(
-        "{}:{}",
-        url.host().unwrap(),
-        url.port().unwrap_or(70),
-    ))
-    .await?;
-    let path = urlencoding::decode(url.path().trim_start_matches("/"))?;
+pub async fn fetch_url(
+    url: &GopherURL,
+    query: Option<String>,
+) -> Result<impl BufReadExt, anyhow::Error> {
+    let mut stream = TcpStream::connect(format!("{}:{}", url.host, url.port,)).await?;
     let selector = match query {
-        Some(q) => format!("{}\t{}\r\n", path, q),
-        None => format!("{}\r\n", path),
+        Some(q) => format!("{}\t{}\r\n", url.selector, q),
+        None => format!("{}\r\n", url.selector),
     };
     stream.write_all(selector.as_bytes()).await?;
     let mut buf = BufReader::new(stream);
@@ -317,41 +397,17 @@ pub async fn fetch_url(url: &Url, query: Option<String>) -> Result<impl BufReadE
        If not, returns original content.
     */
     let mut header = vec![0; 256];
-    buf.read(&mut header).await?;
+    let bytes_read = buf.read(&mut header).await?;
     if let Ok(first_line) = String::from_utf8(header.clone()) {
         match DirEntry::from(first_line.as_str()) {
             entry if entry.item_type == GopherItem::Error => {
-                log::info!("got error fetching {}: {}", url, entry.label);
+                log::error!("got error fetching {}: {}", url, entry.label);
                 return Err(anyhow!(entry.label));
             }
             _ => {}
         }
     }
-    Ok(Cursor::new(header).chain(buf))
-    // BufReader::chain(self, next)
-    // Ok(buf)
-}
-
-fn get_url(selector: &str, host: &str, port: &str) -> Option<Url> {
-    let url_str: String;
-    if selector.starts_with("URL:") {
-        url_str = String::from(&selector[4..])
-    } else {
-        url_str = format!(
-            "gopher://{}:{}/{}",
-            host,
-            port,
-            urlencoding::encode(selector)
-        )
-    };
-
-    match Url::parse(&url_str) {
-        Ok(url) => Some(url),
-        Err(e) => {
-            log::error!("parsing url '{}': {:}", url_str, e);
-            None
-        }
-    }
+    Ok(Cursor::new(header[0..bytes_read].to_vec()).chain(buf))
 }
 
 #[cfg(test)]
@@ -363,9 +419,20 @@ mod tests {
         let e = DirEntry::from("1Test entry\t/test\texample.com\t70\r\n");
         assert_eq!(e.label, "Test entry");
         assert_eq!(e.item_type, GopherItem::Submenu);
+        assert_eq!(e.url.unwrap().host, "example.com");
+    }
+
+    #[test]
+    fn parsing_urls() {
+        let u = GopherURL::from(&Url::parse("gopher://example.com/0/path/to/document").unwrap());
+        assert_eq!(u.gopher_type, GopherItem::TextFile);
+        assert_eq!(u.host, "example.com");
+        assert_eq!(u.port, 70);
+        assert_eq!(u.selector, "/path/to/document");
+        let new_url: Url = u.into();
         assert_eq!(
-            e.url,
-            Some(Url::parse("gopher://example.com:70/test").unwrap())
+            new_url.as_str(),
+            "gopher://example.com:70/0/path/to/document"
         );
     }
 }
