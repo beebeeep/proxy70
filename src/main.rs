@@ -11,7 +11,6 @@ use serde::Deserialize;
 use tide::{http::mime, Request};
 use tide::{prelude::*, Body};
 use tinytemplate::TinyTemplate;
-use url::Url;
 
 const _PAGE_HTML: &str = include_str!("../static/page.html");
 const _WELCOME_HTML: &str = include_str!("../static/welcome.html");
