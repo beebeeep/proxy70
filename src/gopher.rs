@@ -12,7 +12,6 @@ use tide::{
     http::{mime, Mime},
     log,
 };
-use url::Url;
 
 const _INVALID_ENTRY: DirEntry = DirEntry {
     item_type: GopherItem::Unknown,
@@ -149,6 +148,12 @@ impl Into<Mime> for GopherItem {
     }
 }
 
+impl Display for GopherItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", Into::<char>::into(self.clone()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GopherURL {
     pub host: String,
@@ -157,72 +162,44 @@ pub struct GopherURL {
     pub selector: String,
 }
 
-impl From<&str> for GopherURL {
-    fn from(url_str: &str) -> Self {
-        match Url::parse(url_str) {
-            Ok(url) => GopherURL::from(&url),
-            Err(e) => {
-                log::error!("parsing url: {}", e);
-                Self {
-                    host: String::new(),
-                    port: 0,
-                    gopher_type: GopherItem::Unknown,
-                    selector: String::new(),
-                }
-            }
-        }
-    }
-}
-
-impl From<&Url> for GopherURL {
-    fn from(url: &Url) -> Self {
-        let mut r = Self {
-            host: url.host().unwrap().to_string(),
-            port: url.port().unwrap_or(70),
-            gopher_type: GopherItem::Submenu,
-            selector: String::from(""),
+impl TryFrom<&str> for GopherURL {
+    type Error = anyhow::Error;
+    fn try_from(url_str: &str) -> Result<Self, Self::Error> {
+        let gopher_url_re = regex_static::static_regex!(
+            r#"(?:gopher://)?(?P<host>[^:/]+)(?::(?P<port>\d+))?(?:(?:/?$)|(?:/(?P<type>\w)(?P<selector>/.*)))"#
+        );
+        let Some(caps) = gopher_url_re.captures(url_str) else {
+            return Err(anyhow!("failed to parse URL"));
         };
-        if let Some(mut segments) = url.path_segments() {
-            if let Some(t_str) = segments.next() {
-                r.gopher_type = GopherItem::from(t_str.chars().next().unwrap_or('?'));
-                r.selector = segments.fold(String::from(""), |acc, x| format!("{}/{}", acc, x));
-            }
-        }
-        r
+        Ok(Self {
+            host: String::from(caps.name("host").unwrap().as_str()),
+            port: match caps.name("port") {
+                Some(p) => p.as_str().parse().unwrap(),
+                None => 70,
+            },
+            gopher_type: match caps.name("type") {
+                Some(t) => t.as_str().chars().next().unwrap().into(),
+                None => GopherItem::Submenu,
+            },
+            selector: match caps.name("selector") {
+                Some(s) => String::from(s.as_str()),
+                None => String::from(""),
+            },
+        })
     }
 }
 
 impl Display for GopherURL {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let url: Url = match self.clone().try_into() {
-            Ok(u) => u,
-            Err(_) => return Err(std::fmt::Error {}),
-        };
-        write!(f, "{}", url)
-    }
-}
-
-impl TryFrom<GopherURL> for Url {
-    type Error = url::ParseError;
-    fn try_from(u: GopherURL) -> Result<Self, Self::Error> {
-        // this isn't quite the format for gopher URLs as described by IETF (*),
-        // but it seems to be used throughout gopherspace and undestood by clients.
-        // (*) everybody will agree that IETF had a stupid idea
-        // of using tab characters as separators in URL.
-        let url_str = if u.selector.starts_with("URL:") {
-            String::from(&u.selector[4..])
+        if self.selector.is_empty() {
+            write!(f, "gopher://{}:{}", self.host, self.port)
         } else {
-            format!(
-                "gopher://{}:{}/{}/{}",
-                u.host,
-                u.port,
-                Into::<char>::into(u.gopher_type),
-                // TODO: this may break if gopher server will decide to use
-                // really funny selectors
-                u.selector.trim_start_matches("/"),
+            write!(
+                f,
+                "gopher://{}:{}/{}{}",
+                self.host, self.port, self.gopher_type, self.selector
             )
-        };
-        Url::parse(&url_str)
+        }
     }
 }
 
@@ -240,7 +217,10 @@ impl GopherURL {
         if self.selector.starts_with("URL:") {
             Ok(String::from(&self.selector[4..]))
         } else {
-            Ok(format!("?url={}", TryInto::<Url>::try_into(self.clone())?))
+            Ok(format!(
+                "?url={}",
+                urlencoding::encode(self.to_string().as_str())
+            ))
         }
     }
 }
@@ -454,15 +434,11 @@ mod tests {
 
     #[test]
     fn parsing_urls() {
-        let u = GopherURL::from(&Url::parse("gopher://example.com/0/path/to/document").unwrap());
+        let u = GopherURL::try_from("gopher://example.com/0/path/to/document").unwrap();
         assert_eq!(u.gopher_type, GopherItem::TextFile);
         assert_eq!(u.host, "example.com");
         assert_eq!(u.port, 70);
         assert_eq!(u.selector, "/path/to/document");
-        let new_url: Url = u.into();
-        assert_eq!(
-            new_url.as_str(),
-            "gopher://example.com:70/0/path/to/document"
-        );
+        assert_eq!(u.to_string(), "gopher://example.com:70/0/path/to/document");
     }
 }

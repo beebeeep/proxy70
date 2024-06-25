@@ -58,12 +58,8 @@ async fn root(req: Request<()>) -> tide::Result {
     let r: ProxyReq = req.query()?;
     match r.url {
         None => render_nav(req).await,
-        Some(mut url_str) => {
-            if !url_str.starts_with("gopher://") {
-                url_str = format!("gopher://{}", url_str);
-            }
-
-            let url = GopherURL::from(url_str.as_str());
+        Some(url_str) => {
+            let url = GopherURL::try_from(url_str.as_str())?;
 
             let result = match url.gopher_type {
                 GopherItem::Submenu => render_submenu(&url, None).await,
