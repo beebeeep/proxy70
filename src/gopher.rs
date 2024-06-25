@@ -166,11 +166,12 @@ impl TryFrom<&str> for GopherURL {
     type Error = anyhow::Error;
     fn try_from(url_str: &str) -> Result<Self, Self::Error> {
         let gopher_url_re = regex_static::static_regex!(
-            r#"(?:gopher://)?(?P<host>[^:/]+)(?::(?P<port>\d+))?(?:(?:/?$)|(?:/(?P<type>\w)(?P<selector>/.*)))"#
+            r#"(?:gopher://)?(?P<host>[^:/]+)(?::(?P<port>\d+))?(?:/(?P<type>\w)(?P<selector>.*))?$"#
         );
         let Some(caps) = gopher_url_re.captures(url_str) else {
             return Err(anyhow!("failed to parse URL"));
         };
+        log::info!("parsed {} as {:?}", url_str, caps);
         Ok(Self {
             host: String::from(caps.name("host").unwrap().as_str()),
             port: match caps.name("port") {
@@ -426,19 +427,36 @@ mod tests {
 
     #[test]
     fn parsing_entries() {
-        let e = DirEntry::from("1Test entry\t/test\texample.com\t70\r\n");
+        let mut e = DirEntry::from("1Test entry\t/test\texample.com\t70\r\n");
         assert_eq!(e.label, "Test entry");
         assert_eq!(e.item_type, GopherItem::Submenu);
         assert_eq!(e.url.unwrap().host, "example.com");
+        e = DirEntry::from("0test2	selector	1.1.1.1	70\r\n");
+        assert_eq!(e.label, "test2");
+        assert_eq!(e.item_type, GopherItem::TextFile);
+        let url = e.url.unwrap();
+        assert_eq!(url.host, "1.1.1.1");
+        assert_eq!(url.selector, "selector");
+        assert_eq!(url.gopher_type, GopherItem::TextFile);
     }
 
     #[test]
     fn parsing_urls() {
-        let u = GopherURL::try_from("gopher://example.com/0/path/to/document").unwrap();
+        let mut u = GopherURL::try_from("gopher://example.com/0/path/to/document").unwrap();
         assert_eq!(u.gopher_type, GopherItem::TextFile);
         assert_eq!(u.host, "example.com");
         assert_eq!(u.port, 70);
         assert_eq!(u.selector, "/path/to/document");
         assert_eq!(u.to_string(), "gopher://example.com:70/0/path/to/document");
+
+        u = GopherURL::try_from("gopher://example2.com:71").unwrap();
+        assert_eq!(u.gopher_type, GopherItem::Submenu);
+        assert_eq!(u.host, "example2.com");
+        assert_eq!(u.port, 71);
+        assert_eq!(u.selector, "");
+        assert_eq!(u.to_string(), "gopher://example2.com:71");
+
+        u = GopherURL::new("1.1.1.1", "70", &GopherItem::TextFile, "some-selector");
+        assert_eq!(u.to_string(), "gopher://1.1.1.1:70/0some-selector");
     }
 }
