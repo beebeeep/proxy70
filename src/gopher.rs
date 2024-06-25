@@ -14,6 +14,12 @@ use tide::{
 };
 use url::Url;
 
+const _INVALID_ENTRY: DirEntry = DirEntry {
+    item_type: GopherItem::Unknown,
+    label: String::new(),
+    url: None,
+};
+
 #[derive(PartialEq, Debug, Deserialize, Clone, Copy)]
 pub enum GopherItem {
     TextFile,
@@ -188,29 +194,35 @@ impl From<&Url> for GopherURL {
 
 impl Display for GopherURL {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", Into::<Url>::into(self.clone()))
+        let url: Url = match self.clone().try_into() {
+            Ok(u) => u,
+            Err(_) => return Err(std::fmt::Error {}),
+        };
+        write!(f, "{}", url)
     }
 }
 
-impl Into<Url> for GopherURL {
-    fn into(self) -> Url {
+impl TryFrom<GopherURL> for Url {
+    type Error = url::ParseError;
+    fn try_from(u: GopherURL) -> Result<Self, Self::Error> {
         // this isn't quite the format for gopher URLs as described by IETF (*),
         // but it seems to be used throughout gopherspace and undestood by clients.
         // (*) everybody will agree that IETF had a stupid idea
         // of using tab characters as separators in URL.
-        Url::parse(
+        let url_str = if u.selector.starts_with("URL:") {
+            String::from(&u.selector[4..])
+        } else {
             format!(
                 "gopher://{}:{}/{}/{}",
-                self.host,
-                self.port,
-                Into::<char>::into(self.gopher_type),
+                u.host,
+                u.port,
+                Into::<char>::into(u.gopher_type),
                 // TODO: this may break if gopher server will decide to use
                 // really funny selectors
-                self.selector.trim_start_matches("/"),
+                u.selector.trim_start_matches("/"),
             )
-            .as_str(),
-        )
-        .unwrap()
+        };
+        Url::parse(&url_str)
     }
 }
 
@@ -224,11 +236,11 @@ impl GopherURL {
         }
     }
 
-    fn to_href(&self) -> String {
+    fn to_href(&self) -> Result<String, anyhow::Error> {
         if self.selector.starts_with("URL:") {
-            String::from(&self.selector[4..])
+            Ok(String::from(&self.selector[4..]))
         } else {
-            format!("?url={}", urlencoding::encode(&self.to_string()))
+            Ok(format!("?url={}", TryInto::<Url>::try_into(self.clone())?))
         }
     }
 }
@@ -246,15 +258,16 @@ impl From<&str> for DirEntry {
         match (e.next(), e.next(), e.next(), e.next()) {
             (Some(item_label), Some(selector), Some(host), Some(port)) => {
                 let mut s = item_label.chars();
-                let t: GopherItem = s.next().unwrap().into();
+                let t: GopherItem = match s.next() {
+                    Some(c) => c.into(),
+                    None => {
+                        return _INVALID_ENTRY;
+                    }
+                };
                 let label: String = s.collect();
                 DirEntry::new(t, label.as_str(), selector, host, port)
             }
-            _ => DirEntry {
-                item_type: GopherItem::Unknown,
-                label: String::from("[invalid entry]"),
-                url: None,
-            },
+            _ => _INVALID_ENTRY,
         }
     }
 }
@@ -277,7 +290,13 @@ impl DirEntry {
 
     pub fn to_href(&self) -> Option<String> {
         match &self.url {
-            Some(url) => Some(url.to_href()),
+            Some(url) => match url.to_href() {
+                Ok(href) => Some(href),
+                Err(e) => {
+                    log::error!("invalid gopher URL: {:?}: {}", self.url, e);
+                    None
+                }
+            },
             None => None,
         }
     }
@@ -358,6 +377,7 @@ impl Menu {
             }
             let entry = DirEntry::from(line.as_str());
             match entry.item_type {
+                GopherItem::Unknown => continue,
                 GopherItem::Info => {
                     if let Some(item) = items.last_mut() {
                         // merge subsequent info items into one paragraph
@@ -382,11 +402,21 @@ pub async fn fetch_url(
     query: Option<String>,
 ) -> Result<impl BufReadExt, anyhow::Error> {
     let mut stream = TcpStream::connect(format!("{}:{}", url.host, url.port,)).await?;
-    let selector = match query {
-        Some(q) => format!("{}\t{}\r\n", url.selector, q),
-        None => format!("{}\r\n", url.selector),
+    let selector = match urlencoding::decode(
+        match query {
+            Some(q) => format!("{}\t{}\r\n", url.selector, q),
+            None => format!("{}\r\n", url.selector),
+        }
+        .as_str(),
+    ) {
+        Ok(s) => s.into_owned(),
+        Err(e) => {
+            return Err(anyhow!("decoding URL: {}", e));
+        }
     };
-    stream.write_all(selector.as_bytes()).await?;
+    stream
+        .write_all(urlencoding::decode(&selector).unwrap().as_bytes())
+        .await?;
     let mut buf = BufReader::new(stream);
 
     /*

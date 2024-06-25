@@ -18,8 +18,6 @@ const _WELCOME_HTML: &str = include_str!("../static/welcome.html");
 #[derive(Deserialize)]
 struct ProxyReq {
     url: Option<String>,
-    #[serde(alias = "t")]
-    item_type: Option<char>,
     query: Option<String>,
 }
 
@@ -67,7 +65,7 @@ async fn root(req: Request<()>) -> tide::Result {
 
             let url = GopherURL::from(url_str.as_str());
 
-            let result = match GopherItem::from(r.item_type.unwrap_or(GopherItem::Submenu.into())) {
+            let result = match url.gopher_type {
                 GopherItem::Submenu => render_submenu(&url, None).await,
                 GopherItem::FullTextSearch => render_submenu(&url, r.query).await,
                 GopherItem::TextFile => render_text(&url).await,
@@ -131,9 +129,12 @@ async fn render_submenu(url: &GopherURL, query: Option<String>) -> tide::Result 
     let menu = gopher::Menu::from_url(&url, query).await?;
     body.push_str("<table>\n");
     for item in menu.items {
-        body.push_str(
-            format!("<tr>{}</tr>", item.format_row().unwrap_or(String::from(""))).as_str(),
-        )
+        match item.format_row() {
+            Some(content) => body.push_str(format!("<tr>{}</tr>", content).as_str()),
+            None => {
+                continue;
+            }
+        };
     }
     body.push_str("</table>\n");
     Ok(tide::Response::builder(200)
