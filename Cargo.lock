@@ -1437,12 +1437,10 @@ dependencies = [
  "clap",
  "femme",
  "html-escape",
- "http-types",
  "regex_static",
  "serde",
  "tide",
  "tinytemplate",
- "url",
  "urlencoding",
 ]
 
