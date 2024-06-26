@@ -166,7 +166,7 @@ impl TryFrom<&str> for GopherURL {
     type Error = anyhow::Error;
     fn try_from(url_str: &str) -> Result<Self, Self::Error> {
         let gopher_url_re = regex_static::static_regex!(
-            r#"(?:gopher://)?(?P<host>[^:/]+)(?::(?P<port>\d+))?(?:/(?P<type>\w)(?P<selector>.*))?$"#
+            r#"(?:gopher://)?(?P<host>[^:/]+)(?::(?P<port>\d+))?(?:/(?P<type>[A-z0-9:+:;<?])(?P<selector>.*))?$"#
         );
         let Some(caps) = gopher_url_re.captures(url_str) else {
             return Err(anyhow!("failed to parse URL"));
@@ -455,6 +455,11 @@ mod tests {
         assert_eq!(u.port, 71);
         assert_eq!(u.selector, "");
         assert_eq!(u.to_string(), "gopher://example2.com:71");
+
+        u = GopherURL::try_from("gopher://khzae.net:70/</music/khzae/khzae.ogg").unwrap();
+        assert_eq!(u.gopher_type, GopherItem::SoundFile);
+        assert_eq!(u.host, "khzae.net");
+        assert_eq!(u.port, 70);
 
         u = GopherURL::new("1.1.1.1", "70", &GopherItem::TextFile, "some-selector");
         assert_eq!(u.to_string(), "gopher://1.1.1.1:70/0some-selector");
