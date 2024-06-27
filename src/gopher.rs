@@ -1,12 +1,14 @@
 use std::fmt::Display;
 use std::str::FromStr;
 
+use ansitok::{parse_ansi, parse_ansi_sgr, AnsiColor, ElementKind, VisualAttribute};
 use anyhow::anyhow;
 use async_std::stream::StreamExt;
 use async_std::{
     io::{prelude::BufReadExt, BufReader, Cursor, ReadExt, WriteExt},
     net::TcpStream,
 };
+
 use serde::Deserialize;
 use tide::{
     http::{mime, Mime},
@@ -18,6 +20,41 @@ const _INVALID_ENTRY: DirEntry = DirEntry {
     label: String::new(),
     url: None,
 };
+
+const _ANSI_COLORS: &'static [&str] = &[
+    "#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",
+    "#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff",
+    "#000000", "#00005f", "#000087", "#0000af", "#0000d7", "#0000ff", "#005f00", "#005f5f",
+    "#005f87", "#005faf", "#005fd7", "#005fff", "#008700", "#00875f", "#008787", "#0087af",
+    "#0087d7", "#0087ff", "#00af00", "#00af5f", "#00af87", "#00afaf", "#00afd7", "#00afff",
+    "#00d700", "#00d75f", "#00d787", "#00d7af", "#00d7d7", "#00d7ff", "#00ff00", "#00ff5f",
+    "#00ff87", "#00ffaf", "#00ffd7", "#00ffff", "#5f0000", "#5f005f", "#5f0087", "#5f00af",
+    "#5f00d7", "#5f00ff", "#5f5f00", "#5f5f5f", "#5f5f87", "#5f5faf", "#5f5fd7", "#5f5fff",
+    "#5f8700", "#5f875f", "#5f8787", "#5f87af", "#5f87d7", "#5f87ff", "#5faf00", "#5faf5f",
+    "#5faf87", "#5fafaf", "#5fafd7", "#5fafff", "#5fd700", "#5fd75f", "#5fd787", "#5fd7af",
+    "#5fd7d7", "#5fd7ff", "#5fff00", "#5fff5f", "#5fff87", "#5fffaf", "#5fffd7", "#5fffff",
+    "#870000", "#87005f", "#870087", "#8700af", "#8700d7", "#8700ff", "#875f00", "#875f5f",
+    "#875f87", "#875faf", "#875fd7", "#875fff", "#878700", "#87875f", "#878787", "#8787af",
+    "#8787d7", "#8787ff", "#87af00", "#87af5f", "#87af87", "#87afaf", "#87afd7", "#87afff",
+    "#87d700", "#87d75f", "#87d787", "#87d7af", "#87d7d7", "#87d7ff", "#87ff00", "#87ff5f",
+    "#87ff87", "#87ffaf", "#87ffd7", "#87ffff", "#af0000", "#af005f", "#af0087", "#af00af",
+    "#af00d7", "#af00ff", "#af5f00", "#af5f5f", "#af5f87", "#af5faf", "#af5fd7", "#af5fff",
+    "#af8700", "#af875f", "#af8787", "#af87af", "#af87d7", "#af87ff", "#afaf00", "#afaf5f",
+    "#afaf87", "#afafaf", "#afafd7", "#afafff", "#afd700", "#afd75f", "#afd787", "#afd7af",
+    "#afd7d7", "#afd7ff", "#afff00", "#afff5f", "#afff87", "#afffaf", "#afffd7", "#afffff",
+    "#d70000", "#d7005f", "#d70087", "#d700af", "#d700d7", "#d700ff", "#d75f00", "#d75f5f",
+    "#d75f87", "#d75faf", "#d75fd7", "#d75fff", "#d78700", "#d7875f", "#d78787", "#d787af",
+    "#d787d7", "#d787ff", "#d7af00", "#d7af5f", "#d7af87", "#d7afaf", "#d7afd7", "#d7afff",
+    "#d7d700", "#d7d75f", "#d7d787", "#d7d7af", "#d7d7d7", "#d7d7ff", "#d7ff00", "#d7ff5f",
+    "#d7ff87", "#d7ffaf", "#d7ffd7", "#d7ffff", "#ff0000", "#ff005f", "#ff0087", "#ff00af",
+    "#ff00d7", "#ff00ff", "#ff5f00", "#ff5f5f", "#ff5f87", "#ff5faf", "#ff5fd7", "#ff5fff",
+    "#ff8700", "#ff875f", "#ff8787", "#ff87af", "#ff87d7", "#ff87ff", "#ffaf00", "#ffaf5f",
+    "#ffaf87", "#ffafaf", "#ffafd7", "#ffafff", "#ffd700", "#ffd75f", "#ffd787", "#ffd7af",
+    "#ffd7d7", "#ffd7ff", "#ffff00", "#ffff5f", "#ffff87", "#ffffaf", "#ffffd7", "#ffffff",
+    "#080808", "#121212", "#1c1c1c", "#262626", "#303030", "#3a3a3a", "#444444", "#4e4e4e",
+    "#585858", "#626262", "#6c6c6c", "#767676", "#808080", "#8a8a8a", "#949494", "#9e9e9e",
+    "#a8a8a8", "#b2b2b2", "#bcbcbc", "#c6c6c6", "#d0d0d0", "#dadada", "#e4e4e4", "#eeeeee",
+];
 
 #[derive(PartialEq, Debug, Deserialize, Clone, Copy)]
 pub enum GopherItem {
@@ -287,9 +324,9 @@ impl DirEntry {
             Some(url) => format!(
                 r#"<pre><a href="{}"">{}</a></pre>"#,
                 url,
-                html_escape::encode_text(&self.label)
+                &decode_ansi_style(&self.label)
             ),
-            None => format!("<pre>{}</pre>", html_escape::encode_text(&self.label)),
+            None => format!("<pre>{}</pre>", &decode_ansi_style(&self.label)),
         }
     }
 
@@ -421,8 +458,56 @@ pub async fn fetch_url(
     Ok(Cursor::new(header[0..bytes_read].to_vec()).chain(buf))
 }
 
+fn decode_ansi_style(text: &str) -> String {
+    let mut result = String::new();
+    let mut span_style: Vec<String> = Vec::new();
+    for token in parse_ansi(text) {
+        let txt = &text[token.start()..token.end()];
+        match token.kind() {
+            ElementKind::Text => {
+                if !span_style.is_empty() {
+                    result.push_str(&format!(
+                        r#"<span style="{}">{}</span>"#,
+                        span_style.join(";"),
+                        html_escape::encode_text(txt),
+                    ))
+                } else {
+                    result.push_str(txt)
+                }
+            }
+            ElementKind::Sgr => {
+                for style in parse_ansi_sgr(txt) {
+                    match style.as_escape() {
+                        // TODO: more styles?
+                        Some(VisualAttribute::FgColor(c)) => {
+                            span_style.push(format!("color:{}", to_color(c)))
+                        }
+                        Some(VisualAttribute::BgColor(c)) => {
+                            span_style.push(format!("color:{}", to_color(c)))
+                        }
+                        Some(VisualAttribute::Reset(_)) => span_style.clear(),
+                        Some(_) => continue,
+                        None => continue,
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    return result;
+}
+
+fn to_color(c: AnsiColor) -> String {
+    match c {
+        AnsiColor::Bit4(v) | AnsiColor::Bit8(v) => String::from(_ANSI_COLORS[usize::from(v)]),
+        AnsiColor::Bit24 { r, g, b } => format!("rgb({r}, {g}, {b}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use ansitok::{parse_ansi, parse_ansi_sgr, ElementKind, Output};
+
     use super::*;
 
     #[test]
@@ -463,5 +548,24 @@ mod tests {
 
         u = GopherURL::new("1.1.1.1", "70", &GopherItem::TextFile, "some-selector");
         assert_eq!(u.to_string(), "gopher://1.1.1.1:70/0some-selector");
+    }
+
+    #[test]
+    fn ansi_codes() {
+        let text = "[38;5;250mW[0m[38;5;143ma[0m[38;5;145mr[0m[38;5;250me[0m[38;5;250mz[0m";
+        for token in parse_ansi(text) {
+            match token.kind() {
+                ElementKind::Sgr => {
+                    let sgr = &text[token.start()..token.end()];
+                    for style in parse_ansi_sgr(sgr) {
+                        println!("style={:?}", style);
+                        let style = style.as_escape().unwrap();
+                        println!("style={:?}", style);
+                    }
+                }
+                ElementKind::Text => println!("{}", &text[token.start()..token.end()]),
+                _ => (),
+            }
+        }
     }
 }
