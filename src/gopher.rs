@@ -483,7 +483,7 @@ fn decode_ansi_style(text: &str) -> String {
                             span_style.push(format!("color:{}", to_color(c)))
                         }
                         Some(VisualAttribute::BgColor(c)) => {
-                            span_style.push(format!("color:{}", to_color(c)))
+                            span_style.push(format!("background-color:{}", to_color(c)))
                         }
                         Some(VisualAttribute::Reset(_)) => span_style.clear(),
                         Some(_) => continue,
@@ -506,8 +506,6 @@ fn to_color(c: AnsiColor) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ansitok::{parse_ansi, parse_ansi_sgr, ElementKind, Output};
-
     use super::*;
 
     #[test]
@@ -548,24 +546,5 @@ mod tests {
 
         u = GopherURL::new("1.1.1.1", "70", &GopherItem::TextFile, "some-selector");
         assert_eq!(u.to_string(), "gopher://1.1.1.1:70/0some-selector");
-    }
-
-    #[test]
-    fn ansi_codes() {
-        let text = "[38;5;250mW[0m[38;5;143ma[0m[38;5;145mr[0m[38;5;250me[0m[38;5;250mz[0m";
-        for token in parse_ansi(text) {
-            match token.kind() {
-                ElementKind::Sgr => {
-                    let sgr = &text[token.start()..token.end()];
-                    for style in parse_ansi_sgr(sgr) {
-                        println!("style={:?}", style);
-                        let style = style.as_escape().unwrap();
-                        println!("style={:?}", style);
-                    }
-                }
-                ElementKind::Text => println!("{}", &text[token.start()..token.end()]),
-                _ => (),
-            }
-        }
     }
 }
