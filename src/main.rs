@@ -1,11 +1,8 @@
-mod gopher;
-
 use anyhow::Result;
-use async_std::io::prelude::BufReadExt;
-
-use async_std::stream::StreamExt;
+use async_std::io::prelude::BufReadExt as _;
+use async_std::stream::StreamExt as _;
 use clap::Parser;
-use gopher::{GopherItem, GopherURL};
+use proxy70::gopher::{self, GopherItem, GopherURL};
 use serde::Deserialize;
 
 use tide::{http::mime, Request};
