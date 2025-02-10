@@ -16,6 +16,7 @@ ansitok = "0.2.0"
 anyhow = "1.0.86"
 async-std = { version = "1.12.0", features = ["attributes"] }
 clap = { version = "=4.4.18", features = ["derive"] }
+dashmap = "6.1.0"
 femme = "2.2.1"
 html-escape = "0.2.13"
 regex_static = "0.1.1"

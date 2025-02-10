@@ -1,12 +1,17 @@
-use anyhow::Result;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{anyhow, Result};
 use async_std::io::prelude::BufReadExt as _;
 use async_std::stream::StreamExt as _;
+use async_std::task;
 use clap::Parser;
+use dashmap::DashMap;
 use proxy70::gopher::{self, GopherItem, GopherURL};
 use serde::Deserialize;
 
 use tide::{http::mime, Request};
-use tide::{prelude::*, Body};
+use tide::{prelude::*, Body, Middleware, Next, StatusCode};
 use tinytemplate::TinyTemplate;
 
 const _PAGE_HTML: &str = include_str!("../static/page.html");
@@ -16,6 +21,27 @@ const _WELCOME_HTML: &str = include_str!("../static/welcome.html");
 struct ProxyReq {
     url: Option<String>,
     query: Option<String>,
+}
+
+/// Crude rate limiter
+#[derive(Clone)]
+struct RateLimiter {
+    peers: Arc<DashMap<String, usize>>,
+    window: Duration,
+    rps: i32,
+}
+
+impl RateLimiter {
+    fn start(&self) {
+        let peers = self.peers.clone();
+        let window = self.window;
+        task::spawn(async move {
+            loop {
+                peers.iter_mut().for_each(|mut p| *p = 0);
+                task::sleep(window).await;
+            }
+        });
+    }
 }
 
 #[doc(hidden)]
@@ -31,6 +57,31 @@ struct PageTemplate {
     title: String,
     body: String,
     url: Option<String>,
+}
+
+#[tide::utils::async_trait]
+impl Middleware<()> for RateLimiter {
+    async fn handle(&self, req: Request<()>, next: Next<'_, ()>) -> tide::Result {
+        let mut reqs = 0;
+        if let Some(Ok(peer)) = req.peer_addr().map(str::parse::<std::net::SocketAddr>) {
+            let peer = peer.ip().to_string();
+            if let Some(mut x) = self.peers.get_mut(&peer) {
+                *x += 1;
+                reqs = *x;
+            } else {
+                self.peers.insert(peer, 1);
+                reqs = 1;
+            }
+        }
+        let res = next.run(req).await;
+        if reqs as f32 > self.rps as f32 * self.window.as_secs_f32() {
+            return Err(tide::Error::new(
+                StatusCode::TooManyRequests,
+                anyhow!("rate limited"),
+            ));
+        }
+        Ok(res)
+    }
 }
 
 fn render_page(tpl: PageTemplate) -> Result<String, anyhow::Error> {
@@ -144,8 +195,16 @@ async fn render_submenu(url: &GopherURL, query: Option<String>) -> tide::Result 
 async fn main() -> Result<(), std::io::Error> {
     femme::start();
     let args = Args::parse();
+    let limiter = RateLimiter {
+        peers: Arc::new(DashMap::new()),
+        window: Duration::from_secs(10),
+        rps: 1,
+    };
+
+    limiter.start();
 
     let mut app = tide::new();
+    app.with(limiter);
     app.with(tide::log::LogMiddleware::new());
 
     app.at("/").get(root);
