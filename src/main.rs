@@ -208,6 +208,7 @@ async fn main() -> Result<(), std::io::Error> {
     app.with(tide::log::LogMiddleware::new());
 
     app.at("/").get(root);
+    app.at("/robots.txt").serve_file("static/robots.txt")?;
     app.at("/static").serve_dir("static/")?;
 
     app.listen(args.listen_addr).await?;
